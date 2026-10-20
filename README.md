@@ -7,7 +7,7 @@
 
 | 模块 | 能力 | 状态 |
 |------|------|------|
-| 语音输入 | 按住 `F9` 说 → 出字；20 分钟长口述每分钟增量注入；本地/云端 ASR 可选 | ✅ M1~M5 |
+| 语音输入 | 按住 `F9` 说 → 出字；20 分钟长口述**每 10/20/40/60 秒增量上屏**；本地/云端 ASR 可选 | ✅ M1~M5 |
 | 文本整理 | 关闭 / 本地 llama-server（懒加载+复用+回收）/ 云端 OpenAI 兼容，5 档 | ✅ M7 |
 | 键盘输入 | 首启选主力语言（中/英/日）→ 自动铺 Rime 方案包 + 部署；简繁/英文方案可切 | ✅ M8 |
 | 打包分发 | 绿色 zip + 二合一安装包（Inno Setup，含 575MB 离线资源） | ✅ M5/M8 |
@@ -426,7 +426,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify_rime.ps1 -Lang zh
 powershell -ExecutionPolicy Bypass -File tools\verify_rime.ps1 -AfterUninstall
 # 取资源（国内镜像优先，约 622MB）
 powershell -ExecutionPolicy Bypass -File installer\fetch_resources.ps1
-# 二合一安装包（含语法模型约 395MB；-NoLM 可省掉 400MB 模型）
+# 二合一安装包（含语法模型，约 417MB / 417,513,301 B；-NoLM 可省掉 400MB 语法模型）
 powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Setup
 ```
 
