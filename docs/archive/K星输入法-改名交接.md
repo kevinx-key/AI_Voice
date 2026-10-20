@@ -115,7 +115,7 @@
 
 ### 6.4 图标（F，2026-09-24 生成并替换）
 
-**源文件**：`C:\Users\kevin-3080\Desktop\k星输入法logo.svg`（CorelDRAW 导出，画布 210mm×297mm）。
+**源文件**：`C:\Users\<user>\Desktop\k星输入法logo.svg`（CorelDRAW 导出，画布 210mm×297mm）。
 **处理**：裁到中心圆角矩形区（viewBox `7643.5 8906.65 3500 3500`）→ 母版 `K:\K3R-voice\resource\k3r\kstar-logo.svg`（2 条 #2C46FF 路径，与源文件逐字节一致；原圆角矩形是 `fill:none` 不可见，仅作边界参考）。
 
 **设计规格（kevin 选定）**：
@@ -130,7 +130,7 @@
 
 **规格**：6 尺寸 16/24/32/48/64/256，32 位带 Alpha；每尺寸由 Chromium 直接矢量渲染（非缩放降采样），Pillow 打包 ICO。
 **产物**：`resource\{weasel,zh,en,full,half,reload}.ico` + `WeaselSetup\WeaselSetup.ico`（各 8.6–11 KB）；PNG 源 42 张在 `resource\k3r\icons\`。
-**验收预览**：`C:\Users\kevin-3080\Desktop\K星图标成品预览.png`（明/暗底 × 256/48/32/24/16px，含 16px 4 倍放大）。
+**验收预览**：`C:\Users\<user>\Desktop\K星图标成品预览.png`（明/暗底 × 256/48/32/24/16px，含 16px 4 倍放大）。
 **重编记录（2026-09-24 18:35–18:38）**：Weasel x64+Win32 重编成功（0 警告 0 错误，21.9s 增量）→ NSIS 出包 11,990,374 B → 已替换 `resources\rime\weasel-0.17.4.0-installer.exe` → Inno Setup 重编 `dist\ai-voice-0.1.0-setup.exe`（416,365,193 B，28.9s）。图标嵌入已二进制验证（exe/dll 内含新 ICO 的 PNG 数据，全部产物 0 处「小狼毫」）。
 **剩余步骤**：重装 `dist\ai-voice-0.1.0-setup.exe` + 重启一次 → 验收。
 

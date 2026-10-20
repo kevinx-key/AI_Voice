@@ -785,3 +785,9 @@ K:\AI_Voice_rs\
 
 排期与详细起点见 `调试计划.md`（P0 收尾 / P1 观察项 / P2 backlog）：
 macOS / Linux 三端（M6）· 法文方案包（`Lang::Fr` 已预留）· FunASR-Nano 高精度 · Silero VAD 分段 · 方案包/LM 更新通道。
+
+---
+
+## 许可证
+
+代码以 **MIT** 发布（见 [LICENSE](LICENSE)）。第三方组件的许可与再分发注意事项见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

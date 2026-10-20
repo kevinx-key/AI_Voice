@@ -51,7 +51,7 @@
 | 项 | 事实 |
 |----|------|
 | 系统 | Windows 10 + PowerShell 5.1 |
-| 网络 | `HTTPS_PROXY=http://127.0.0.1:7897` 已设且**已验证**（`curl github.com` → 200）；git 全局 `http.sslverify=false`；git 身份 `709208969 / 709208969@qq.com`；另有 ghproxy.net 凭据 |
+| 网络 | `HTTPS_PROXY=http://127.0.0.1:7897` 已设且**已验证**（`curl github.com` → 200）；git 全局 `http.sslverify=false`；git 身份 `（GitHub 账号） / （邮箱已隐去）`；另有 ghproxy.net 代理 |
 | 磁盘 | K: 剩余 5.4TB（空间无忧） |
 | VS | VS18 Community（`C:\Program Files\Microsoft Visual Studio\18\Community`），**MSVC 工具集只有 14.50.35717，无 v143** |
 | 缺失依赖 | CMake 未装、NSIS 未装、Boost 无 |
@@ -61,7 +61,7 @@
 | AI Voice | `K:\AI_Voice_rs`；安装器 `installer\ai-voice.iss`（`DefaultDirName={autopf}\AIVoice`、`PrivilegesRequired=admin`、`AppMutex=Global\AIVoiceRust`、**无 [Registry] 段**） |
 | AI Voice 单实例 | 互斥体 `Global\AIVoiceRust`（`src/main.rs:1058-1072`）；第二次启动命中后**只打印"已在运行"就退出**（`src/main.rs:174-185`，注释写了"唤起设置窗"但**未实现**） |
 | AI Voice 其他锚点 | 托盘「打开设置…」`src/tray.rs:72`；托盘事件轮询 `src/gui.rs:184-187`；设置页「输入法」区 `src/gui.rs:934+` |
-| Rime 用户目录 | `C:\Users\kevin-3080\AppData\Roaming\Rime`（**勿动用户词库/配置**） |
+| Rime 用户目录 | `C:\Users\<user>\AppData\Roaming\Rime`（**勿动用户词库/配置**） |
 | 部署日志 | `%TEMP%\rime.weasel\` |
 
 ## 5. 执行步骤
@@ -226,7 +226,7 @@ Start-Process .\WeaselServer.exe
 
 - `%APPDATA%\Rime\default.custom.yaml` 已加 `Shift_L/Shift_R: noop`（防误触切英文）——**尚未重新部署**，找机会部署验证
 - 上一轮"托盘右键打不开输入法设定"：已重启 WeaselServer，等 kevin 复验；fork 替换后一并观察
-- Rime 用户目录 `C:\Users\kevin-3080\AppData\Roaming\Rime`：**只碰我们管理的键**，勿动用户词库/配置
+- Rime 用户目录 `C:\Users\<user>\AppData\Roaming\Rime`：**只碰我们管理的键**，勿动用户词库/配置
 
 ## 9. 关键路径索引
 
@@ -238,7 +238,7 @@ Start-Process .\WeaselServer.exe
 | 待替换的官方安装包 | `K:\AI_Voice_rs\resources\rime\weasel-0.17.4.0-installer.exe` |
 | AI Voice 源码 | `K:\AI_Voice_rs\src\`（main.rs / tray.rs / gui.rs） |
 | AI Voice 安装器 | `K:\AI_Voice_rs\installer\ai-voice.iss` |
-| Rime 用户目录 | `C:\Users\kevin-3080\AppData\Roaming\Rime` |
+| Rime 用户目录 | `C:\Users\<user>\AppData\Roaming\Rime` |
 | 部署日志 | `%TEMP%\rime.weasel\` |
 | 本计划 | `K:\AI_Voice_rs\Weasel-Fork实施计划.md` |
 
@@ -299,7 +299,7 @@ Start-Process .\WeaselServer.exe
 ### 10.4 已验证（自主执行期间）
 
 1. **构建**：Weasel x64 + Win32 均 0 error；librime 含 lua/octagram/predict（日志 `-- rime_plugins_modules: lua;octagram;predict`）。
-2. **冒烟测试**（旁路，不动 Program Files）：把产物拷到 `K:\K3R-voice\spike-test\` 直接跑 `WeaselServer.exe` → 进程存活、建立命名管道 `\\.\pipe\kevin-3080\WeaselNamedPipe`、加载全部 schema、`lua_translator/lua_filter/predictor/octagram` 全部注册成功、无 ERROR。
+2. **冒烟测试**（旁路，不动 Program Files）：把产物拷到 `K:\K3R-voice\spike-test\` 直接跑 `WeaselServer.exe` → 进程存活、建立命名管道 `\\.\pipe\<user>\WeaselNamedPipe`、加载全部 schema、`lua_translator/lua_filter/predictor/octagram` 全部注册成功、无 ERROR。
 3. **唤起链路实测**：`ai-voice.exe --settings`（经 App Paths 解析）→ 常驻实例日志出现「收到唤起请求 → 显示设置窗口」。
 4. **自建 NSIS 包内容核对**：与官方包逐项比对（WeaselServer/Setup/Deployer、weasel(x64).ime、data\essay.txt、data\opencc），功能等价；差异仅：无 ARM 文件（本机 x64 不需要）、二进制用 14.50 编译故体积略大。
 

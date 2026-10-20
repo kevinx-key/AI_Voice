@@ -6,7 +6,7 @@ import struct
 import sys
 import time
 
-PIPE = r'\\.\pipe\kevin-3080\WeaselNamedPipe'
+PIPE = r'\\.\pipe\<user>\WeaselNamedPipe'
 WM_APP = 0x8000
 FOCUS_IN = WM_APP + 6
 FOCUS_OUT = WM_APP + 7
