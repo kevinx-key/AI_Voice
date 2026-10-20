@@ -268,6 +268,7 @@ asr_top_n = 30             # 送 FunASR-Nano 热词 prompt 的条数上限（其
 phrases = true             # 快捷输入表（hotwords\phrases.tsv）；只用于打字
 learn = true               # 用户词学习（hotwords\learned.tsv，我打过的词自动置顶）；只用于打字
 learn_max = 300            # 我打过的词最多置顶多少条（超出按使用次数淘汰）
+prefix_completion = true   # 字词联想：打前缀也出热词候选（改完需「立即部署」一次）
 # 另外 `hotwords\mine.tsv` = 「我的热词」：自己加，条数**不设上限**，打字+录音两条链都生效
 learn_auto_deploy = 20     # 攒够这么多新词就自动写进打字表（0 = 只能手动）
 
@@ -589,6 +590,11 @@ GeekHack 11,875 篇帖子词频 → 权重）；冲突判定拿雾凇自带词�
   0.6 秒后自动写回 `config.toml` + 发 `ReloadConfig` 热更新（连续改多个只写一次）；
   关窗前再强制存一次。热键写错（如敲到一半的 `f`）**不会把坏值写进配置**，
   保留磁盘上那个有效热键并在状态栏说明（`config::normalize_before_save`，有单测）。
+- **字词联想（打前缀也出热词）**（2026-10-21 用户要求开启）：给 Rime 的 `custom_phrase` 打开
+  `enable_completion`，于是打 `g` 就能看到 `GB / Gasket / GitHub…`。
+  开关在 设置页 → 热词 → 「字词联想」（`[hotwords] prefix_completion`，默认开）。
+  ⚠️ 这是**方案结构改动**：改完要到「输入法」页点「立即部署」（一次 UAC）才生效；
+  候选会变多，嫌吵就关掉再部署一次。
 - **热词条数没有天花板**（2026-10-21）：打字侧 = 全部启用包 + 我打过的词 + 「我的热词」，
   全量进 Rime 候选表；录音侧受**后端**约束 —— FunASR-Nano 走 prompt 热词
   （`asr_top_n` 默认 30，可调到 1~200，但受模型 512 token 上下文限制，实测 30~60 较稳）；
@@ -671,9 +677,9 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Setup -NoLM   # �
 
 | 产物 | 大小 | 预算 |
 |------|------|------|
-| `listen.exe`（静态 sherpa-onnx + 静态 CRT，单文件无 DLL） | **32.6 MB** | ≤ 35 MB ✅ |
-| 绿色 zip（不含模型） | 约 12.5 MB | ≤ 25 MB ✅ |
-| 二合一安装包 `dist\listen-*-setup.exe`（含 Rime 资源约 622MB，其中语法模型 400MB） | **395.3 MB** | — |
+| `listen.exe`（静态 sherpa-onnx + 静态 CRT，单文件无 DLL） | **38.6 MB** | — |
+| 绿色 zip（不含模型） | **15.2 MB** | — |
+| 二合一安装包 `dist\listen-*-setup.exe`（含 Rime 资源约 622MB，其中语法模型 400MB） | **417.5 MB**（2026-10-21 重打，SHA `4af99020…`） | — |
 | 模型（首次运行下载） | 230 MB | — |
 
 > 体积构成：本体 26.1MB（ASR + 网络 + 托盘）+ GUI（egui/eframe）6.5MB。
