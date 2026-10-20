@@ -765,13 +765,13 @@ K:\AI_Voice_rs\
 
 ---
 
-## 构建环境（本机已就绪）
+## 构建环境（开发机参考配置）
 
 | 项 | 值 |
 |----|-----|
-| Rust | 1.94.1（`K:\dev\.cargo`，`CARGO_HOME` / `RUSTUP_HOME` 需显式设置） |
-| 工具链 | `stable-x86_64-pc-windows-msvc` + VS 2026 |
-| crates 镜像 | rsproxy.cn（已写入 `K:\dev\.cargo\config.toml`） |
+| Rust | stable ≥ 1.94（`x86_64-pc-windows-msvc`） |
+| 工具链 | MSVC + Windows SDK（VS 2022/2026 均可） |
+| crates 镜像 | 可选；国内可用 rsproxy.cn 之类写入 `~/.cargo/config.toml` |
 | sherpa-onnx | 1.13.8，静态链接；**官方 no-tts 预编译库**（无 espeak-ng(GPL)/piper_phonemize），走 `SHERPA_ONNX_LIB_DIR` |
 | GUI | eframe 0.35（**wgpu** 后端，无 accesskit）；中文用系统字体 |
 
