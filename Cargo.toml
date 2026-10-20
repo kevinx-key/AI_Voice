@@ -1,0 +1,40 @@
+[package]
+name = "listen"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "按住热键说话 → 出字。本地/云端 ASR 可选的三端语音输入工具"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+arboard = "3.6.1"
+clap = { version = "4.6.7", features = ["derive"] }
+cpal = "0.18.2"
+eframe = { version = "0.35.0", default-features = false, features = ["default_fonts", "wgpu"] }
+hound = "3.5.1"
+pinyin = "0.11.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "multipart", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+sherpa-onnx = "1.13.8"
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tray-icon = "0.25.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security"] }
+
+[patch.crates-io]
+# 本地 patch：移除 espeak-ng(GPL-3.0)/piper_phonemize 静态链接（改用官方 no-tts 预编译库）
+# 背景与验证方法见 vendor/sherpa-onnx-sys/build.rs 顶部注释
+sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

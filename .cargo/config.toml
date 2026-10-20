@@ -1,0 +1,9 @@
+[target.x86_64-pc-windows-msvc]
+# 静态链接 CRT：免装 VC++ 运行库（与 sherpa-onnx 静态库的 /MT 一致）
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+# sherpa-onnx 预编译库归档目录（避免构建时联网）
+SHERPA_ONNX_ARCHIVE_DIR = { value = ".cache", relative = true }
+# 官方 no-tts 静态库（无 espeak-ng(GPL)/piper_phonemize），优先于归档目录生效
+SHERPA_ONNX_LIB_DIR = { value = ".cache/sherpa-onnx-v1.13.8-win-x64-static-MT-Release-no-tts-lib/lib", relative = true }

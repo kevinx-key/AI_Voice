@@ -1,0 +1,107 @@
+# 倾听输入法 默认配置（首次运行会在 exe 同级自动生成 config.toml）
+# 路径均相对于本文件所在目录（绿色部署根）
+
+[general]
+hotkey = "f9"              # 语法 [修饰+]*键：win / ctrl / alt / shift 可组合（如 win+h / ctrl+alt+f8）；字母键须带修饰键
+raw_hotkey = "shift+f9"    # 仅展示：取原文固定为「主键修饰 + Shift」，此字段不参与解析
+hotkey_mode = "hold"       # hold = 按住说话；toggle = 按一下开始、再按一下停止（长语音推荐）
+max_session_minutes = 30   # 单次会话上限（分钟）
+managed_tray = true        # 托管模式（输入法 fork 拉起）下仍显示自己的状态托盘图标：
+                           # 圆点=就绪/灰、录音=红（同非托管模式）。若 fork 那边也开了托盘图标
+                           # （Rime 配置 display_tray_icon: true）会有两个图标，不想看到就设 false
+gate_engine = "vad"        # 门控引擎：vad = Silero VAD（默认，只认人声；键盘/环境噪声不再被送进 ASR）
+                           # energy = 旧能量门（只看音量，兼容用）；VAD 不可用时自动回退 energy 并记 WARN
+vad_threshold = 0.5        # VAD 灵敏度阈值（0~1，判为语音的概率门槛）：越大越严（噪声少，轻声可能被漏）
+vad_min_speech_seconds = 0.25  # VAD 最短语音（秒）：短于它不当语音；越大越能滤掉咳嗽/敲键“咔哒”
+segment_seconds = 3        # vad = 一段的**最长上限**（max_speech_duration，正常由尾部静音收尾）；
+                           # energy = 分段目标长度（秒）。越小越实时；SenseVoice 建议 ≤30
+silence_seconds = 0.5      # vad = 尾部静音（min_silence_duration，说完多久上屏）；energy = 静音断句（0 = 关闭）
+                           # 调小更跟手，但话中间一停顿就可能被切成两段
+drop_short_english = false # 丢弃"纯英文且很短"的结果（环境音常被误判为英文短词）；vibecoding 需要短英文，故默认关
+flush_seconds = 20         # 出字间隔（秒）：设置页 4 选 1 = 10 / 20 / 40 / 60；每满这么久就把已识别的文字整理后上屏一次
+min_speech_rms = 0.0015    # [能量门参数] 低于此 RMS 视为静音，不识别/不注入（越低越灵敏，噪声也越多）
+min_record_seconds = 0.2   # [能量门参数] 短于此长度的段直接丢弃（0.2 约可识别单音节）
+prewarm_capture = true     # 预热录音：引擎就绪即保持采集流常开（按下瞬间用 pre-roll 补回起头丢字；代价：麦克风指示灯常亮）
+prewarm_idle_minutes = 0   # 预热空闲自动关麦（分钟）；**0 = 永不关（默认，2026-10-09 起）**
+                           # 为什么默认永不关：关麦后**下一次按下必丢起头**（实测 `起头补 0ms`），
+                           # 用户体感就是“偶尔第一句少字”；省下的只是采集线程那点开销。
+                           # 需要省资源的人用设置页的 6 选 1 档位：只在按下时开麦 / 永不 / 3 / 5 / 10 / 30 分钟
+                           # （界面档位只写这两个字段，手改这里也能用；非预设值界面会显示「自定义」）
+model_release_minutes = 0  # 空闲多久后**释放模型**（分钟；**0 = 永不释放（默认）**，2026-10-09 起）
+                           # 释放 = 卸载 ASR 识别模型（省内存）+ 停掉本程序拉起的 llama-server（省显存）
+                           # 代价：空闲后第一次按下要重载识别模型（实测 ~1.8s）；首次整理冷启动 10~25s（本次用原文）
+                           # 档位与预热同一套：永不 / 3 / 5 / 10 / 30 分钟（与麦克风预热相互独立）
+gui_render = "auto"        # 界面渲染后端：auto=集显优先（没有集显就用独显）；gpu=强制独显；
+                           # software=强制软件光栅（能彻底避开独显争用导致的界面定格，
+                           #   但实测 CPU 代价 3~16 个核，只在“界面明显卡”时才试）
+autostart = false
+log_level = "info"
+device = ""                # 空=系统默认；可填设备名片段做模糊匹配（--devices 可列出）
+managed_suspend_exit_minutes = 0  # 托管：挂起后 N 分钟未恢复自动退出；0 = 不自动退（默认）
+                             # 为何默认 0：挂起已不再摘热键，进程一退 F9 就彻底没响应，
+                             # 而重新拉起只能等输入法激活（实测空窗最长 39 分钟）
+
+[asr]
+backend = "local"          # local | cloud
+language = ""              # 空=自动；可填 "zh" / "en"
+local_model = "models/sense-voice"
+num_threads = 4
+
+[asr.cloud]                # OpenAI 兼容 /v1/audio/transcriptions
+base_url = ""              # 例：https://api.example.com/v1
+api_key = ""
+model = "whisper-1"
+timeout_s = 15
+
+[polish]                   # 整理后端：local = 本地 llama-server；cloud = OpenAI 兼容 /v1/chat/completions
+enabled = true             # 总开关（默认开启本地轻度清洗；界面里可切 5 档）
+provider = "local"         # local | cloud
+mode = "light"             # light=轻度清洗 | polish=中度润色
+base_url = ""              # 仅 cloud 用
+api_key = ""
+model = ""
+timeout_s = 5              # 单次整理超时（本地会自动取 max(此值, 20s)）
+
+[polish.local]             # 本地大模型（懒加载：第一次真正要整理时才拉起）
+exe = "K:\\projects\\llama.cpp\\build\\bin\\Release\\llama-server.exe"
+model = "K:\\AI_Voice\\models\\llm\\Qwen3.5-4B-Q4_K_M.gguf"
+host = "127.0.0.1"
+port = 18080
+ngl = 99                   # GPU 层数，99 = 全部；改小可卸载到 CPU
+ctx = 4096
+temperature = 0.2
+top_p = 0.9
+max_tokens = 512           # 必须设上限，否则思考残留会撞满 ctx 返回空
+disable_thinking = true    # 关思考（Qwen3.5 等思考型模型必须 true，否则空+慢 100 倍）
+start_timeout_s = 150      # 冷启动等待上限（秒）
+wait_on_first_use = false  # 首次触发是否同步等待；false = 本次用原文，后台拉起
+stop_on_exit = true        # 程序退出时回收自己拉起的实例（别人启动的一律不动）
+
+[inject]
+restore_clipboard = true
+paste_delay_ms = 250
+restore_delay_ms = 600
+raw_replace_undo = true
+chunk_separator = " "      # 分段注入之间的分隔符（聊天框建议用空格，换行可能直接发送消息）
+
+[rime]                     # 输入法（Rime 二合一）：键盘输入部分
+resources = ""             # 空 = 自动找 exe 同级 resources\（再往上级找 3 层，开发期用）
+user_dir = ""              # 空 = 自动：HKCU\Software\Rime\Weasel\RimeUserDir → %APPDATA%\Rime
+primary_lang = ""          # zh | en | ja（空 = 未配置，首启向导会问）
+english_mixed = true       # 英文方案是否一并放进方案列表（F4 可切）
+zh_trad = false            # 中文简繁默认态：false=简 true=繁（Ctrl+Shift+4 可切）
+grammar = true             # 万象语法模型（仅中文，打长句更顺；文件约 400MB）
+weasel_version = ""        # 检测/部署时写入
+weasel_installed_by_us = false
+last_deploy = ""           # 最近一次部署日志尾部（GUI 展示）
+
+[hotwords]                 # 热词包：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
+enabled = true
+packs = ["vibecoding", "keyboard"]  # <exe 同级>\hotwords\<名>.tsv；内置 vibecoding / keyboard
+asr_top_n = 30             # 送 FunASR-Nano 热词 prompt 的条数上限（其 LLM 上下文有限）
+dir = ""                   # 空 = exe 同级 hotwords\
+
+# [glossary]               # 可选：手写补充术语（优先级高于热词包；GUI 不展示）
+# terms = ["nRF54L15"]
+# aliases = ["欧拉马=Ollama"]   # ASR 常把英文音译成中文
+# corrections = ["grape=grep"] # 英文同音错词（整词、忽略大小写）

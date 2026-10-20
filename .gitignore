@@ -1,0 +1,22 @@
+# 构建产物
+/target
+/dist
+
+# 本地缓存（sherpa-onnx 预编译库归档、临时测试脚本）
+/.cache
+
+# 运行时数据（绿色部署根）
+/logs
+/models
+/config.toml
+
+# Rime 离线资源（K星输入法安装器 + 四套方案包 + 语法模型，约 575MB）
+# 用 installer/fetch_resources.ps1 取齐，不入库
+/resources
+
+# 系统
+Thumbs.db
+desktop.ini
+
+# 本机历史备份目录
+/.bak

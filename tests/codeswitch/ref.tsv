@@ -1,0 +1,24 @@
+# 中英混说（code-switching）横评用例
+# 格式：文件名<TAB>参考文本<TAB>需命中的英文术语（分号分隔）
+# 把每句录成同名 wav（16k 单声道）放进本目录，然后：
+#   listen.exe --bench K:\AI_Voice_rs\tests\codeswitch
+01.wav	我昨天用 Ollama 跑了一下 Qwen 模型，响应速度还可以。	Ollama;Qwen
+02.wav	这个 commit 把 BLE 的连接参数改了一下，连接间隔从三十毫秒调到十五。	commit;BLE
+03.wav	你把 GitHub 上那个 repo clone 到本地，然后切到 develop 分支。	GitHub;clone;develop
+04.wav	nRF52832 的 SAADC 采样有点漂，我怀疑是参考电压的问题。	nRF52832;SAADC
+05.wav	这段代码用 clang 编译会报 warning，得改成 gcc 才行。	clang;warning;gcc
+06.wav	Docker 里的容器起不来，Kubernetes 一直在 crash loop。	Docker;Kubernetes;crash loop
+07.wav	前端用 React 写的，后端是 Node.js，数据库用 PostgreSQL。	React;Node.js;PostgreSQL
+08.wav	这个 API 返回的是 JSON，你得先 parse 一下再存到 cache。	API;JSON;parse;cache
+09.wav	我用 VS Code 的 Copilot 补全了一段 Rust 代码，但是 borrow checker 没过。	VS Code;Copilot;Rust;borrow checker
+10.wav	把 FreeRTOS 的任务优先级调一下，别让 UART 中断 starving 了。	FreeRTOS;UART
+11.wav	这个 PCB 的 Gerber 文件我发给你了，用 KiCad 打开看看阻抗匹配。	PCB;Gerber;KiCad
+12.wav	仓库里 main 分支的 pipeline 挂了，是 npm 依赖版本冲突。	pipeline;npm
+13.wav	用 OpenOCD 加 GDB 调试，断点打在 bootloader 的跳转那里。	OpenOCD;GDB;bootloader
+14.wav	我这边 WiFi 信号太差，导致 MQTT 的 QoS 重传特别严重。	WiFi;MQTT;QoS
+15.wav	你把这个文件用 grep 搜一下，再拿 awk 处理成 CSV。	grep;awk;CSV
+16.wav	这个 QMK 固件要 merge 到 master 之前，先跑一遍 unit test。	QMK;merge;master;unit test
+17.wav	LLM 的 prompt 我改成了 few-shot，token 消耗一下子涨了不少。	LLM;prompt;few-shot;token
+18.wav	显示器是 4K 的，用 HDMI 只能跑六十赫兹，换 DisplayPort 才能到一百四十四。	HDMI;DisplayPort
+19.wav	我 push 上去之后 CI 报错，说 TypeScript 的 type 不匹配。	push;CI;TypeScript;type
+20.wav	先用 Wireshark 抓个包，看看 TCP 三次握手有没有 SYN ACK。	Wireshark;TCP;SYN;ACK
