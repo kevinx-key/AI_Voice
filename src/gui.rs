@@ -352,6 +352,7 @@ pub struct Gui {
     pub rime_state: Arc<Mutex<RimeState>>,
     pub rime_info: crate::rime::WeaselInfo,
     pub last_rime_check: Instant,
+
     /// 热词管理器：正在编辑的包名（空 = 还没载入过）
     pub hw_pack: String,
     /// 热词管理器：编辑中的词条（只在开页/切换包时读盘，不每帧读）
@@ -363,6 +364,10 @@ pub struct Gui {
     pub hw_new_note: String,
     /// 列表里选中的行（编辑用）
     hw_pick: Option<usize>,
+    /// 「快捷输入」独立词条表（固定在热词页顶部，不跟词表下拉联动）
+    qe_terms: Vec<crate::hotwords::Term>,
+    qe_loaded: bool,
+    qe_status: String,
     pub hw_dirty: bool,
     pub hw_status: String,
     /// 热词管理器：「恢复内置词表」二次确认
@@ -461,6 +466,9 @@ impl Gui {
         hw_new_text: String::new(),
         hw_new_note: String::new(),
         hw_pick: None,
+        qe_terms: Vec::new(),
+        qe_loaded: false,
+        qe_status: String::new(),
             hw_dirty: false,
             hw_status: String::new(),
             hw_confirm_restore: false,
@@ -2011,9 +2019,144 @@ impl Gui {
         self.probe_note("hdr_rime", resp.header_response.rect);
     }
 
+    /// 快捷输入（独立分区，2026-10-21：固定显示在最上方，不受折叠状态影响）
+    fn section_quick_input(&mut self, ui: &mut egui::Ui) {
+        // ================= 快捷输入（固定第一块，2026-10-21 用户要求） =================
+        if !self.qe_loaded {
+            self.qe_loaded = true;
+            self.qe_terms =
+                crate::hotwords::read_pack(&self.cfg, &self.paths, crate::hotwords::PHRASES);
+        tracing::info!("[快捷输入] 区块已渲染（已存 {} 条）", self.qe_terms.len());
+        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.heading("快捷输入");
+            ui.weak("打个短码 → 直接出你要的整段文本（快递地址、手机号、常用语…）");
+        });
+        ui.horizontal(|ui| {
+            ui.label("快捷键");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.hw_new_code)
+                    .desired_width(110.0)
+                    .hint_text("gds"),
+            );
+            ui.label("备注");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.hw_new_note)
+                    .desired_width(200.0)
+                    .hint_text("快递地址（只给自己看）"),
+            );
+        });
+        ui.label("词语 / 文本（上屏的完整内容，长度不限）");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.hw_new_text)
+                .desired_width(f32::INFINITY)
+                .desired_rows(3)
+                .hint_text("广东省深圳市南山区科技园南路 1 号 3 栋 502"),
+        );
+        let code_ok = {
+            let c = self.hw_new_code.trim().to_lowercase();
+            c.len() >= 2 && c.chars().all(|ch| ch.is_ascii_lowercase())
+        };
+        let text_ok = !self.hw_new_text.trim().is_empty();
+        ui.horizontal(|ui| {
+            let btn = ui.add_enabled(code_ok && text_ok, egui::Button::new("＋ 添加 / 更新"));
+            if btn.clicked() {
+                let code = self.hw_new_code.trim().to_lowercase();
+                let text = self.hw_new_text.trim().to_string();
+                let note = self.hw_new_note.trim().to_string();
+                if let Some(t) = self.qe_terms.iter_mut().find(|t| t.code == code) {
+                    t.text = text;
+                    t.note = note;
+                } else {
+                    self.qe_terms.push(crate::hotwords::Term {
+                        text,
+                        code,
+                        category: "快捷输入".into(),
+                        weight: 90,
+                        rank: 0,
+                        note,
+                    });
+                }
+                self.hw_new_code.clear();
+                self.hw_new_text.clear();
+                self.hw_new_note.clear();
+                self.qe_status = "已加入列表，点「保存到文件」生效".into();
+            }
+            if ui.button("清空表单").clicked() {
+                self.hw_new_code.clear();
+                self.hw_new_text.clear();
+                self.hw_new_note.clear();
+            }
+            if !code_ok && !self.hw_new_code.trim().is_empty() {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 120, 90),
+                    "快捷键只能用小写字母（≥2 位）",
+                );
+            }
+            ui.separator();
+            if ui.button("💾 保存到文件").clicked() {
+                self.qe_save();
+            }
+            if !self.qe_status.is_empty() {
+                ui.weak(&self.qe_status);
+            }
+        });
+        // 已有条目
+        let mut del: Option<usize> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("qe_scroll")
+            .max_height(180.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("qe_grid")
+                    .num_columns(4)
+                    .striped(true)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.strong("快捷键");
+                        ui.strong("词语");
+                        ui.strong("备注");
+                        ui.strong("");
+                        ui.end_row();
+                        if self.qe_terms.is_empty() {
+                            ui.weak("（还没有）在上面填一个试试：快捷键 gds，词语贴你的快递地址");
+                            ui.end_row();
+                        }
+                        for (i, t) in self.qe_terms.iter().enumerate() {
+                            ui.monospace(&t.code);
+                            let short: String = t.text.chars().take(42).collect();
+                            ui.label(short);
+                            ui.weak(&t.note);
+                            ui.horizontal(|ui| {
+                                if ui.small_button("编辑").clicked() {
+                                    self.hw_new_code = t.code.clone();
+                                    self.hw_new_text = t.text.clone();
+                                    self.hw_new_note = t.note.clone();
+                                }
+                                if ui.small_button("删除").clicked() {
+                                    del = Some(i);
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+            });
+        if let Some(i) = del {
+            self.qe_terms.remove(i);
+            self.qe_status = "已删除，点「保存到文件」生效".into();
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        ui.weak("下面是其它词表（热词包 / 我打过的词），只影响打字候选与录音热词，与上面的快捷输入互不影响。");
+        ui.add_space(2.0);
+    }
     /// 热词管理器：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
     fn section_hotwords(&mut self, ui: &mut egui::Ui) {
-        let hdr = egui::CollapsingHeader::new("热词（打字 + 录音）");
+
+        self.section_quick_input(ui);
+
+        let hdr = egui::CollapsingHeader::new("热词 / 快捷输入（打字 + 录音）").default_open(true);
         let resp = hdr.show(ui, |ui| {
             ui.weak(
                 "一份词表同时驱动两条链：打字 → Rime 置顶候选（保存后切窗口即生效）；录音 → 识别热词偏置 + 术语保留",
@@ -2028,6 +2171,7 @@ impl Gui {
                     .unwrap_or_else(|| crate::hotwords::KEYBOARD.to_string());
                 self.hw_reload();
             }
+
 
             // ---- 包选择 + 开关 ----
             let names = self.hw_pack_names();
@@ -2602,6 +2746,33 @@ impl Gui {
     }
 
     /// 写回 tsv + 让 config 变更立即生效（录音侧热词随配置热更新重建）
+    /// 保存「快捷输入」到 `hotwords\phrases.tsv` 并立刻写打字表
+    fn qe_save(&mut self) {
+        let path = crate::hotwords::pack_path(&self.cfg, &self.paths, crate::hotwords::PHRASES);
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let body = crate::hotwords::render_tsv(crate::hotwords::PHRASES, &self.qe_terms);
+        match std::fs::write(&path, body) {
+            Ok(()) => {
+                let note = match crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
+                    Ok(Some(p)) => {
+                        tracing::info!("[快捷输入] 已重写打字表: {p}");
+                        "已保存并写入打字表（切窗口即生效）"
+                    }
+                    Ok(None) => "已保存（未检测到倾听输入法，跳过打字表）",
+                    Err(e) => {
+                        tracing::warn!("[快捷输入] 写打字表失败: {e:#}");
+                        "已保存，但写打字表失败（见日志）"
+                    }
+                };
+                self.qe_status = format!("{} 条 · {note}", self.qe_terms.len());
+                let _ = self.cmd_tx.send(Cmd::ReloadHotwords);
+                tracing::info!("[快捷输入] {}", self.qe_status);
+            }
+            Err(e) => self.qe_status = format!("保存失败: {e}"),
+        }
+    }
     fn hw_save(&mut self) {
         let d = crate::hotwords::dir(&self.cfg, &self.paths);
         if let Err(e) = std::fs::create_dir_all(&d) {
