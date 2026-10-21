@@ -155,3 +155,37 @@ fn send_combo(modifier_vk: u16, key_vk: u16) -> Result<()> {
 fn send_combo(_modifier_vk: u16, _key_vk: u16) -> Result<()> {
     anyhow::bail!("文本注入仅支持 Windows")
 }
+/// 发 N 个退格（全局字符扩展用：退掉已敲的编码 + 结束符）
+///
+/// 用 SendInput 直接发 VK_BACK，不走剪贴板；n 上限 64（防手滑传入大数把文档删掉）。
+pub fn send_backspaces(n: usize) -> anyhow::Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_BACK,
+    };
+    let n = n.min(64);
+    for _ in 0..n {
+        let mut inputs = [INPUT::default(); 2];
+        inputs[0].r#type = INPUT_KEYBOARD;
+        inputs[0].Anonymous = INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_BACK,
+                ..Default::default()
+            },
+        };
+        inputs[1].r#type = INPUT_KEYBOARD;
+        inputs[1].Anonymous = INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_BACK,
+                dwFlags: KEYEVENTF_KEYUP,
+                ..Default::default()
+            },
+        };
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if sent == 0 {
+            anyhow::bail!("SendInput(VK_BACK) 失败");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    let _ = VIRTUAL_KEY(0);
+    Ok(())
+}

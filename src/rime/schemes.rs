@@ -189,6 +189,9 @@ pub fn schema_block(
             "  custom_phrase/enable_completion: {}\n",
             if completion { "true" } else { "false" }
         ));
+        // rime-ice 默认 99，但主词库的整句候选权重可能更高（实测：学过的「杰盛微」只能排第 2）。
+        // 拉到 1e6，保证我们表里的词（快捷输入/学过的词）稳定排第一。
+        s.push_str("  custom_phrase/initial_quality: 1000000\n");
     }
     if let Some(p) = learn_path {
         // 追加一个旁路 processor：不处理按键，只把「编码 + 上屏文本」记到本地文件
@@ -280,7 +283,7 @@ mod tests {
         let b = schema_block(None, false, false, true, false, None);
         assert_eq!(
             b,
-            "  custom_phrase/user_dict: listen_hotwords\n  custom_phrase/enable_completion: false\n"
+            "  custom_phrase/user_dict: listen_hotwords\n  custom_phrase/enable_completion: false\n  custom_phrase/initial_quality: 1000000\n"
         );
         assert!(schema_block(None, false, false, false, false, None).is_empty());
         // 与 grammar / 简繁共处时三者都在

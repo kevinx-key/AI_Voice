@@ -462,6 +462,61 @@ fn main() -> Result<()> {
         tracing::info!("语音引擎总开关为 OFF：不安装热键、不加载识别模型");
     }
 
+    // 全局「快捷输入」展开（2026-10-21 方案 C 的第二半）：
+    // 中文状态由 Rime 候选表出（第一项）；英文 / 直通状态由这里的键盘钩子兜底。
+    let mut _expand_hook: Option<hotkey::expand_win::ExpandHandle> = None;
+    if cfg.hotwords.enabled && cfg.hotwords.quick_expand {
+        let tsv = hotwords::pack_path(&cfg, &paths, hotwords::PHRASES);
+        let beat = std::env::var_os("APPDATA")
+            .map(|p| std::path::PathBuf::from(p).join("Rime").join("listen_ime_beat.txt"));
+        let text = std::fs::read_to_string(&tsv).unwrap_or_default();
+        let map = hotkey::expand::PhraseMap::from_tsv(&text, cfg.hotwords.quick_expand_min_len);
+        let shared = hotkey::expand::Shared::new(true, beat.clone(), map);
+        let (etx, erx) = std::sync::mpsc::channel::<hotkey::expand::ExpandReq>();
+        let inj_cfg = cfg.inject.clone();
+        std::thread::Builder::new()
+            .name("expand-run".into())
+            .spawn(move || {
+                let inj = inject::Injector::new(&inj_cfg);
+                while let Ok((n, text)) = erx.recv() {
+                    // 等应用处理完那个结束符再动手，否则退格会打到别处
+                    std::thread::sleep(Duration::from_millis(60));
+                    if let Err(e) = inject::send_backspaces(n) {
+                        tracing::warn!("快捷输入展开失败（退格）: {e:#}");
+                        continue;
+                    }
+                    match inj.inject(&text) {
+                        Ok(()) => tracing::info!(
+                            "快捷输入展开：退格 {n} 次 → 注入 {} 字",
+                            text.chars().count()
+                        ),
+                        Err(e) => tracing::warn!("快捷输入展开失败（注入）: {e:#}"),
+                    }
+                }
+            })
+            .ok();
+        // 守卫前置条件：心跳文件由 `listen_learn.lua` 写。lua 要靠**部署**才生效，
+        // 没部署时心跳永远不存在 → 无法区分中英状态 → 宁可先不装（否则中文状态会重复出字）。
+        let beat_ready = beat.as_ref().map(|p| p.exists()).unwrap_or(false);
+        if !beat_ready {
+            tracing::warn!(
+                "全局快捷输入：等一次「立即部署」（lua 心跳 listen_ime_beat.txt 还没生成）—— 部署后重启 listen 即生效"
+            );
+        } else {
+            match hotkey::expand_win::spawn(shared.clone(), etx, tsv) {
+                Ok(h) => {
+                    tracing::info!(
+                        "全局快捷输入已就绪（{} 条编码，最短 {} 位；中文状态交给输入法本身）",
+                        shared.map.read().map(|m| m.len()).unwrap_or(0),
+                        cfg.hotwords.quick_expand_min_len
+                    );
+                    _expand_hook = Some(h);
+                }
+                Err(e) => tracing::warn!("全局快捷输入未启用: {e:#}"),
+            }
+        }
+    }
+
     // 热键转发**独立线程**（2026-10-07）：热键事件不再经 GUI 帧循环转发。
     // 原实现把 hk_rx→cmd_tx 放在 eframe 的 App::ui（gui::pump）里，只要 GUI 卡一帧
     // （wgpu 渲染与 llama-server 抢 GPU / 窗口重绘停摆），按键就被一起吞掉 ——

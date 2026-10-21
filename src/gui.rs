@@ -2049,7 +2049,8 @@ impl Gui {
                 };
                 let label = if is_user { "启用（只用于打字）" } else { "启用此包" };
                 if ui.checkbox(&mut on, label).changed() {
-                    if self.hw_pack == crate::hotwords::PHRASES {
+                    ui.weak(format!("当前词表：{}", self.hw_pack_label()));
+            if self.hw_pack == crate::hotwords::PHRASES {
                         self.cfg.hotwords.phrases = on;
                     } else if self.hw_pack == crate::hotwords::LEARNED {
                         self.cfg.hotwords.learn = on;
@@ -2065,6 +2066,25 @@ impl Gui {
                 if ui.checkbox(&mut en, "总开关").changed() {
                     self.cfg.hotwords.enabled = en;
                     touch!(self);
+                }
+                // 全局「快捷输入」展开（英文 / 直通状态兜底，方案 C）
+                let mut qe = self.cfg.hotwords.quick_expand;
+                if ui
+                    .checkbox(&mut qe, "英文/直通状态也展开快捷输入")
+                    .on_hover_text(
+                        "中文状态由输入法候选表直接出第一项；英文（直通）状态没有候选窗，\
+                         这里用键盘钩子兜底：敲完编码再按空格 → 退格 + 注入文本。\
+                         守卫：中文输入法活跃时自动沉默（靠 lua 心跳），不会重复出字。\
+                         ⚠️ 需要先部署一次（lua 心跳）；见到误触就关掉这项。",
+                    )
+                    .changed()
+                {
+                    self.cfg.hotwords.quick_expand = qe;
+                    touch!(self);
+                    self.hw_status = format!(
+                        "全局快捷输入已{}（重启 listen 后生效）",
+                        if qe { "打开" } else { "关闭" }
+                    );
                 }
                 // 打字联想（custom_phrase/enable_completion）：打前缀也带出热词
                 let mut pc = self.cfg.hotwords.prefix_completion;
@@ -2273,6 +2293,7 @@ impl Gui {
                     crate::open_path(&d);
                 }
             });
+            ui.weak(format!("当前词表：{}", self.hw_pack_label()));
             if self.hw_pack == crate::hotwords::PHRASES {
                 ui.weak(
                     "快捷输入：编码只能小写字母（如 gds / yunghg），打完按空格 → 第一候选就是「词条」那段文本（长度不限，可随时改）。只用于打字，不进录音热词。",

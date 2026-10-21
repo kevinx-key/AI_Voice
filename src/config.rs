@@ -457,6 +457,15 @@ pub struct Hotwords {
     pub asr_top_n: usize,
     /// 快捷输入表（`hotwords\phrases.tsv`，编码 → 任意文本）；**只用于打字**
     pub phrases: bool,
+    /// 全局「快捷输入」展开（英文 / 直通状态下也能用 `gds` → 快递地址）
+    ///
+    /// 中文状态走 Rime 候选表（第一项），这里负责兜底：
+    /// 键盘钩子缓冲最近字符 → 命中用户编码 → 退格 + 注入文本。
+    /// **守卫**：靠 `listen_learn.lua` 写的 `%APPDATA%\Rime\listen_ime_beat.txt` 心跳判断
+    /// 当前是不是中文输入状态；心跳新鲜就保持沉默，避免与输入法重复出字。
+    pub quick_expand: bool,
+    /// 触发展开的最短编码长度（默认 3，防误伤）
+    pub quick_expand_min_len: usize,
     /// 打字「字词联想」：给 Rime 的 `custom_phrase` 开 `enable_completion`
     ///
     /// 打开后**打前缀也能带出热词**（如 `g` 就能看到 GB / Gasket / GitHub…），
@@ -480,6 +489,8 @@ impl Default for Hotwords {
             asr_top_n: 30,
             phrases: true,
             prefix_completion: true,
+            quick_expand: true,
+            quick_expand_min_len: 3,
             learn: true,
             learn_max: 2000,
             learn_auto_deploy: 20,

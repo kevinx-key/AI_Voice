@@ -97,9 +97,12 @@ last_deploy = ""           # 最近一次部署日志尾部（GUI 展示）
 
 [hotwords]                 # 热词包：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
 enabled = true
-packs = ["vibecoding", "keyboard"]  # <exe 同级>\hotwords\<名>.tsv；内置 vibecoding / keyboard
+packs = ["vibecoding", "keyboard", "mine"]  # <exe 同级>\hotwords\<名>.tsv；mine = 我的热词（条数不限）
 asr_top_n = 30             # 送 FunASR-Nano 热词 prompt 的条数上限（其 LLM 上下文有限）
 dir = ""                   # 空 = exe 同级 hotwords\
+prefix_completion = true   # 字词联想：打前缀也出热词（改完需「立即部署」）
+quick_expand = true        # 英文/直通状态也用键盘钩子展开快捷输入（需部署生成 lua 心跳）
+quick_expand_min_len = 3   # 触发展开的最短编码长度
 
 # [glossary]               # 可选：手写补充术语（优先级高于热词包；GUI 不展示）
 # terms = ["nRF54L15"]

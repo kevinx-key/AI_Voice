@@ -9,6 +9,8 @@ use anyhow::{bail, Result};
 use std::sync::mpsc::Sender;
 
 #[cfg(windows)]
+pub mod expand;
+pub mod expand_win;
 pub mod windows;
 
 /// 逻辑修饰键位掩码（左右任一算按住）
