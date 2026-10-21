@@ -2438,8 +2438,23 @@ impl Gui {
             Ok(()) => {
                 self.hw_dirty = false;
                 let ncode = self.hw_terms.iter().filter(|t| !t.code.trim().is_empty()).count();
+                // ★ 打字侧立刻重写 Rime 候选表（2026-10-21 修）：
+                // 旧实现只发 ReloadHotwords（录音/整理侧），打字侧要等「学习到 20 个新词」
+                // 才会被 tick_learn 顺手刷一次 —— 用户新加的「快捷输入」（快递地址 gds）
+                // 当场打字根本出不来，看起来像功能坏了。
+                let rime_note = match crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
+                    Ok(Some(p)) => {
+                        tracing::info!("[热词] 已重写打字表: {p}");
+                        "，已写入打字表（切窗口即生效）"
+                    }
+                    Ok(None) => "（未检测到倾听输入法，跳过打字表）",
+                    Err(e) => {
+                        tracing::warn!("[热词] 重写打字表失败: {e:#}");
+                        "（写打字表失败，见日志）"
+                    }
+                };
                 self.hw_status = format!(
-                    "已保存 {} 条（{ncode} 条带打字编码）→ {}",
+                    "已保存 {} 条（{ncode} 条带打字编码）→ {}{rime_note}",
                     self.hw_terms.len(),
                     path.display()
                 );

@@ -305,6 +305,13 @@ fn main() -> Result<()> {
     for l in hotwords::ensure_user_packs(&cfg, &paths) {
         tracing::info!("{}", l.trim());
     }
+    // 启动时把「打字热词表」与当前配置同步一次：手改 `hotwords\*.tsv` 后重启也能生效
+    // （旧实现只在「学习到 N 个新词」时才刷，手改的表要等很久）
+    match hotwords::apply_to_rime(&cfg, &paths) {
+        Ok(Some(p)) => tracing::info!("打字热词表已同步: {p}"),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("打字热词表同步失败: {e:#}"),
+    }
     if let Some(wav) = &cli.once {
         return run_once(&paths, &cfg, wav);
     }
