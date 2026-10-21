@@ -49,12 +49,19 @@
 
 ## 快速开始
 
-```powershell
-# 编译
-$env:CARGO_HOME="K:\dev\.cargo"; $env:RUSTUP_HOME="K:\dev\.rustup"
-cargo build --release
+前置：Windows 10/11 x64、Rust stable（`x86_64-pc-windows-msvc`）+ VS Build Tools，
+以及 sherpa-onnx 的 **no-tts 静态库**（解压到 `.cache/`，见文末「构建环境」）。
+不想自己编就直接用 release 里的安装包。
 
-# 跑起来（双击 exe 也行，会直接打开设置界面）
+```powershell
+git clone https://github.com/kevinx-key/AI_Voice.git
+cd AI_Voice
+
+# 一次性：把 sherpa-onnx no-tts 静态库解压到 .cache/
+#   https://github.com/k2-fsa/sherpa-onnx/releases → *-static-MT-Release-no-tts-lib.tar.bz2
+#   （.cargo/config.toml 里的 SHERPA_ONNX_LIB_DIR 已指向 .cache/<解压目录>/lib）
+
+cargo build --release
 .\target\release\listen.exe
 ```
 
