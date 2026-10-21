@@ -481,7 +481,7 @@ impl Default for Hotwords {
             phrases: true,
             prefix_completion: true,
             learn: true,
-            learn_max: 300,
+            learn_max: 2000,
             learn_auto_deploy: 20,
         }
     }

@@ -40,7 +40,7 @@ fn note_of(count: u32) -> String {
     format!("{count} 次")
 }
 /// 从「说明」列解析使用次数（解析不出来按 1）
-fn count_of(note: &str) -> u32 {
+pub fn count_of(note: &str) -> u32 {
     note.split_whitespace()
         .next()
         .and_then(|s| s.parse().ok())
@@ -94,6 +94,38 @@ impl Imported {
 /// 增量导入：读日志的新增部分 → 合并进 `learned.tsv` → 记录进度
 ///
 /// `relearn = true` 时忽略进度，把整份日志重新吃一遍（“重新学习全部”）。
+/// 一条「词」而不是「句子」：热词表只收词语（2026-10-21 用户要求）
+///
+/// 规则（与 lua 侧的第一道过滤互补，这里是唯一权威）：
+/// - 只允许汉字 / 字母 / 数字 / `_` `-`：出现空格、标点、括号、表情 → 丢掉（句子基本都被这条挡掉）
+/// - 汉字 ≤ 6 个（`杰盛微`=3 ✓，`这句话太长了超过六个字` ✗）
+/// - 纯英文/数字 ≤ 24 个字符（`PostgreSQL` 这类术语别误杀）
+pub fn is_word_like(word: &str) -> bool {
+    let w = word.trim();
+    if w.is_empty() {
+        return false;
+    }
+    let mut cjk = 0usize;
+    for c in w.chars() {
+        if is_cjk(c) {
+            cjk += 1;
+        } else if !(c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return false; // 标点/空格/符号 → 当句子处理
+        }
+    }
+    if cjk > 6 {
+        return false;
+    }
+    if cjk == 0 && w.chars().count() > 24 {
+        return false;
+    }
+    true
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x3040..=0x30FF | 0xAC00..=0xD7AF)
+}
 pub fn import_new(cfg: &Config, paths: &Paths, relearn: bool) -> Result<Imported> {
     let _guard = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log = log_path(cfg, paths);
@@ -123,8 +155,7 @@ pub fn import_new(cfg: &Config, paths: &Paths, relearn: bool) -> Result<Imported
         if code.len() < 2
             || code.len() > 12
             || !code.chars().all(|c| c.is_ascii_lowercase())
-            || word.is_empty()
-            || word.chars().count() > 12
+            || !is_word_like(&word)
         {
             continue;
         }
@@ -156,6 +187,7 @@ pub fn import_new(cfg: &Config, paths: &Paths, relearn: bool) -> Result<Imported
                         code,
                         category: "learned".into(),
                         weight: 0,
+                        rank: 0, // 真正排序权重在 hotwords::load() 里按「使用次数」给
                         note: String::new(),
                     },
                     n,
@@ -345,5 +377,18 @@ mod tests {
         import_new(&cfg, &paths, false).unwrap();
         assert_eq!(learned_terms(&cfg, &paths).len(), 2);
         std::fs::remove_dir_all(&dir).ok();
+    }
+    // ---- 2026-10-21：只收「词语」，不收句子 ----
+
+    #[test]
+    fn word_like_filter() {
+        assert!(is_word_like("杰盛微"), "3 个汉字是词");
+        assert!(is_word_like("PostgreSQL"), "英文术语不能误杀");
+        assert!(is_word_like("nRF52832"));
+        assert!(!is_word_like(""), "空串");
+        assert!(!is_word_like("这句话太长了超过六个字"), "超过 6 个汉字当句子丢掉");
+        assert!(!is_word_like("你好，世界"), "带标点 = 句子");
+        assert!(!is_word_like("hello world"), "带空格 = 句子");
+        assert!(!is_word_like("好的。"), "句末标点");
     }
 }

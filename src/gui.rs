@@ -2025,11 +2025,11 @@ impl Gui {
                 ui.label("词表");
                 let mut pick = self.hw_pack.clone();
                 egui::ComboBox::from_id_salt("hw_pack")
-                    .width(160.0)
-                    .selected_text(pick.clone())
+                    .width(230.0)
+                    .selected_text(Self::pack_label(&pick))
                     .show_ui(ui, |ui| {
                         for n in &names {
-                            ui.selectable_value(&mut pick, n.clone(), n);
+                            ui.selectable_value(&mut pick, n.clone(), Self::pack_label(n));
                         }
                     });
                 if pick != self.hw_pack {
@@ -2273,6 +2273,15 @@ impl Gui {
                     crate::open_path(&d);
                 }
             });
+            if self.hw_pack == crate::hotwords::PHRASES {
+                ui.weak(
+                    "快捷输入：编码只能小写字母（如 gds / yunghg），打完按空格 → 第一候选就是「词条」那段文本（长度不限，可随时改）。只用于打字，不进录音热词。",
+                );
+            } else if self.hw_pack == crate::hotwords::LEARNED {
+                ui.weak(
+                    "自动学习：只收「词语」（汉字 ≤6 个、无标点空格），按使用次数排序 —— 反复选的那个词会自动跑到第一候选（10 秒内生效，切窗口即可）。",
+                );
+            }
             if !self.hw_status.is_empty() {
                 ui.weak(self.hw_status.clone());
             }
@@ -2378,6 +2387,23 @@ impl Gui {
     }
 
     /// 可选的词表：我的词表（快捷输入 / 我打过的词）+ 内置包 + 用户目录里自己放的 *.tsv
+    /// 词表在下拉里的显示名（第一项固定是「快捷输入」，2026-10-21 用户要求）
+    fn pack_label(name: &str) -> String {
+        match name {
+            crate::hotwords::PHRASES => "快捷输入（自定义编码 → 任意文本）".to_string(),
+            crate::hotwords::LEARNED => "我打过的词（自动学习，按使用次数排前）".to_string(),
+            crate::hotwords::MINE => "我的热词（自己加，条数不限）".to_string(),
+            crate::hotwords::KEYBOARD => "内置：键圈".to_string(),
+            crate::hotwords::VIBECODING => "内置：AI 编程".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// 当前包的中文标签（标题行/提示用）
+    fn hw_pack_label(&self) -> String {
+        Self::pack_label(&self.hw_pack)
+    }
+
     fn hw_pack_names(&self) -> Vec<String> {
         let mut names: Vec<String> = vec![
             crate::hotwords::PHRASES.to_string(),

@@ -1174,7 +1174,7 @@ impl Worker {
     /// 注意：**不需要提权部署** —— 实测 `listen_hotwords.txt` 是每个输入会话开始时重读的纯文本表，
     /// 改完内容换个窗口就生效（所以这里不弹 UAC，不阻塞 worker）。
     fn tick_learn(&mut self) {
-        if self.learn_last.elapsed() < Duration::from_secs(30) {
+        if self.learn_last.elapsed() < Duration::from_secs(10) {
             return;
         }
         self.learn_last = Instant::now();
@@ -1198,9 +1198,12 @@ impl Worker {
             Err(e) => tracing::warn!("[学习] 导入学习日志失败: {e:#}"),
         }
 
+        // 2026-10-21：**立即**生效，不再等「攒够 N 个新词」（默认阈值是 20）。
+        // 用户选一次「杰盛微」，10 秒内就该在候选表里排到第一；旧行为要等 20 个新词，
+        // 体感就是"输入法没学会"。阈值配置保留但只用于「要不要弹提示」。
         let threshold = self.cfg.hotwords.learn_auto_deploy;
         let pending = self.learn_pending.load(std::sync::atomic::Ordering::SeqCst);
-        if threshold == 0 || pending < threshold {
+        if pending == 0 {
             return;
         }
         match crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
@@ -1208,9 +1211,12 @@ impl Worker {
                 tracing::info!("[学习] 已把 {pending} 个新词写进打字表（切窗口即生效，无需部署）");
                 self.learn_pending
                     .store(0, std::sync::atomic::Ordering::SeqCst);
-                let _ = self.evt.send(Evt::Hint(format!(
-                    "记住新词 {pending} 条，已写进打字表（切一下窗口生效）"
-                )));
+                // 攒够阈值才弹提示，但**每次都写表**（上面 apply_to_rime 无条件执行）
+                if threshold > 0 && pending >= threshold {
+                    let _ = self.evt.send(Evt::Hint(format!(
+                        "记住新词 {pending} 条，已写进打字表（切一下窗口生效）"
+                    )));
+                }
             }
             Ok(None) => {
                 // 倾听输入法没装/用户目录不在 → 不重试风暴，直接归零等下次变化

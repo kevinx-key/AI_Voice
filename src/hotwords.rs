@@ -29,6 +29,11 @@ pub const LEARNED: &str = "learned";
 /// 打字侧进候选表无上限，录音侧只受「送识别模型的条数上限 asr_top_n」约束）。
 pub const MINE: &str = "mine";
 
+/// Rime 候选表的 rank 基数（第三列权重，越大越靠前；同编码内比较）
+pub const RANK_PHRASES: i32 = 1_000_000; // 快捷输入：永远第一
+pub const RANK_MINE: i32 = 500_000; // 我的热词
+pub const RANK_LEARNED: i32 = 100_000; // 我打过的词（+ 使用次数）
+
 /// 只进打字侧、不进录音热词的词表（地址、私人词条不该进识别 prompt）
 pub fn is_typing_only(name: &str) -> bool {
     name == PHRASES || name == LEARNED
@@ -77,7 +82,13 @@ pub struct Term {
     /// 打字编码（小写）；空 = 只进录音侧
     pub code: String,
     pub category: String,
+    /// 我们自己的显示/筛选权重（0~100，GUI 里那一列）
     pub weight: i32,
+    /// 写进 Rime 候选表的**排序权重**（`词条⇥编码⇥权重` 的第三列）
+    ///
+    /// 由 `load()` 按来源分配：快捷输入 > 我的热词 > 我打过的词（按次数） > 内置包（按 weight）。
+    /// 同编码下数值越大越靠前 —— 这就是「多次选过的词自动排到第一」的实现方式（2026-10-21）。
+    pub rank: i32,
     /// 说明（中文释义，仅展示）
     pub note: String,
 }
@@ -89,11 +100,13 @@ impl Term {
             return None;
         }
         let get = |i: usize| f.get(i).map(|s| s.trim()).unwrap_or("");
+        let weight = get(3).parse().unwrap_or(50);
         Some(Self {
             text: text.to_string(),
             code: get(1).to_lowercase(),
             category: get(2).to_string(),
-            weight: get(3).parse().unwrap_or(50),
+            weight,
+            rank: weight,
             note: get(4).to_string(),
         })
     }
@@ -229,19 +242,32 @@ pub fn load(cfg: &Config, paths: &Paths) -> Vec<Term> {
     }
     let mut all: Vec<Term> = Vec::new();
     if cfg.hotwords.phrases {
-        all.extend(read_pack(cfg, paths, PHRASES));
+        // 快捷输入排最前：用户自定义编码 → 任意文本（`gds` → 快递地址），必须第一候选
+        all.extend(read_pack(cfg, paths, PHRASES).into_iter().map(|mut t| {
+            t.rank = RANK_PHRASES + t.weight.clamp(0, 100) * 10;
+            t
+        }));
     }
     if cfg.hotwords.learn {
         let mut learned = read_pack(cfg, paths, LEARNED);
         learned.truncate(cfg.hotwords.learn_max.max(1)); // 文件本身按次数降序
-        all.extend(learned);
+        // 学到的词按「用过几次」定 rank：次数越多越靠前 → 多次选过的词自动第一
+        all.extend(learned.into_iter().map(|mut t| {
+            let n = crate::learn::count_of(&t.note).min(500) as i32;
+            t.rank = RANK_LEARNED + n;
+            t
+        }));
     }
     for name in &cfg.hotwords.packs {
         let name = name.trim();
         if name.is_empty() || is_typing_only(name) {
             continue;
         }
-        all.extend(read_pack(cfg, paths, name));
+        let base = if name == MINE { RANK_MINE } else { 0 };
+        all.extend(read_pack(cfg, paths, name).into_iter().map(|mut t| {
+            t.rank = base + t.weight.clamp(0, 100) * 10;
+            t
+        }));
     }
     // 同编码/同词条已去重；再按权重降序，让候选表与 GUI 的顺序好看（不影响同编码的胜负）
     sort_dedup(priority_dedup(all))
@@ -345,7 +371,10 @@ pub fn rime_table(terms: &[Term]) -> String {
          #\n\
          # 此行之后不能写注释\n",
     );
-    for t in terms {
+    // 按 rank 降序写：同编码内权重大的排前面（rime-ice 的 custom_phrase 表第三列就是权重）
+    let mut ordered: Vec<&Term> = terms.iter().collect();
+    ordered.sort_by(|a, b| b.rank.cmp(&a.rank).then_with(|| a.text.cmp(&b.text)));
+    for t in ordered {
         let code = t.code.trim();
         // 全拼输入缓冲只认 a-z（雾凇 speller/alphabet 不含数字/符号）
         if code.is_empty()
@@ -354,7 +383,10 @@ pub fn rime_table(terms: &[Term]) -> String {
         {
             continue;
         }
-        s.push_str(&format!("{}\t{}\n", t.text, code));
+        // 第三列 = 权重（rime-ice 的 custom_phrase.txt 格式：词汇⇥编码⇥权重）
+        // 旧实现只写两列 → 同编码的所有词权重都是 0 → 候选顺序等于随机，
+        // 用户反复选「杰盛微」也压不过「杰升为」（2026-10-21 修）。
+        s.push_str(&format!("{}\t{}\t{}\n", t.text, code, t.rank.max(1)));
     }
     s
 }
@@ -382,6 +414,31 @@ pub fn write_rime_table(cfg: &Config, paths: &Paths, user_dir: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    // ---- 2026-10-21：候选排序（Rime 表第三列权重） ----
+
+    #[test]
+    fn rime_table_writes_weight_column() {
+        let terms = vec![
+            Term { text: "杰盛微".into(), code: "jieshengwei".into(), rank: 100_000 + 7, weight: 90, ..Default::default() },
+            Term { text: "杰升为".into(), code: "jieshengwei".into(), rank: 50, weight: 50, ..Default::default() },
+        ];
+        let table = rime_table(&terms);
+        // 两列是不够的：同编码会随机排序（旧 bug）
+        assert!(table.contains("杰盛微\tjieshengwei\t100007"), "{table}");
+        assert!(table.contains("杰升为\tjieshengwei\t50"), "{table}");
+        // rank 大的先写
+        let a = table.find("杰盛微").unwrap();
+        let b = table.find("杰升为").unwrap();
+        assert!(a < b, "高频词必须排在前面:\n{table}");
+    }
+
+    #[test]
+    fn source_priority_phrases_beats_learned_beats_packs() {
+        // load() 的 rank 分配：快捷输入 > 我的热词 > 我打过的词 > 内置包
+        assert!(RANK_PHRASES > RANK_MINE);
+        assert!(RANK_MINE > RANK_LEARNED);
+        assert!(RANK_LEARNED > 100 * 10);
+    }
 
     #[test]
     fn tsv_flexible_columns() {
@@ -416,7 +473,7 @@ mod tests {
     fn rime_table_drops_non_letter_codes() {
         let ts = parse_tsv("R1\tr1\tx\t90\t\nnRF52832\tnrf52832\tx\t80\t\nFR4\tfr4\tx\t70\t\nGB\tgb\tx\t60\t\n");
         let body = rime_table(&ts);
-        assert!(body.contains("GB\tgb\n"));
+        assert!(body.contains("GB\tgb\t"), "GB 应进表（带权重列）: {body}");
         for bad in ["R1", "nRF52832", "FR4"] {
             assert!(!body.contains(bad), "{bad} 不该进打字表");
         }
@@ -434,7 +491,7 @@ mod tests {
     fn rime_table_skips_empty_code() {
         let ts = parse_tsv("GB\tgb\tx\t90\t\nGroup Buy\t\tx\t80\t\n");
         let body = rime_table(&ts);
-        assert!(body.contains("GB\tgb\n"));
+        assert!(body.contains("GB\tgb\t"), "GB 应进表（带权重列）: {body}");
         assert!(!body.contains("Group Buy"));
         assert!(body.contains("listen_hotwords.txt"));
     }
