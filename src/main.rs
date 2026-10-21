@@ -619,12 +619,22 @@ fn main() -> Result<()> {
     if !show_on_start {
         viewport = viewport.with_visible(false);
     }
-    let options = eframe::NativeOptions {
+    // 渲染后端：`gui_render = "glow"` 走 OpenGL，其余走 wgpu（Vulkan/DX12）
+    let mode = cfg.general.gui_render.trim().to_ascii_lowercase();
+    let want_glow = matches!(mode.as_str(), "glow" | "ogl" | "opengl");
+    let mut options = eframe::NativeOptions {
         viewport,
-        wgpu_options: gui_wgpu_options(&cfg),
         ..Default::default()
     };
-    eframe::run_native(
+    if want_glow {
+        options.renderer = eframe::Renderer::Glow;
+        tracing::info!("GUI 渲染后端: glow（OpenGL）");
+    } else {
+        options.wgpu_options = gui_wgpu_options(&cfg);
+    }
+    let cfg_for_fallback = cfg.clone();
+    let paths_for_fallback = paths.clone();
+    let run_res = eframe::run_native(
         "倾听输入法 设置",
         options,
         Box::new(move |cc| {
@@ -643,8 +653,20 @@ fn main() -> Result<()> {
             }
             Ok(Box::new(g))
         }),
-    )
-    .map_err(|e| anyhow::anyhow!("GUI 启动失败: {e}"))?;
+    );
+    match run_res {
+        Ok(()) => {}
+        Err(e) if want_glow => {
+            // 这台机器建不出 OpenGL 上下文（缺驱动/远程桌面等）：自动改回 auto 再退出，
+            // 用户下次启动就是 wgpu，不用手改配置。
+            tracing::error!("glow 渲染后端启动失败: {e:#} → gui_render 改回 auto，请重新启动");
+            let mut c = Config::load_or_create(&paths_for_fallback).unwrap_or(cfg_for_fallback);
+            c.general.gui_render = "auto".into();
+            let _ = c.save(&paths_for_fallback);
+            std::process::exit(2);
+        }
+        Err(e) => return Err(anyhow::anyhow!("GUI 启动失败: {e}")),
+    }
     // 走到这里 = GUI 事件循环正常结束（托盘「退出程序」/窗口关闭流程），
     // 留一行收尾日志：以后日志里「突然断掉」和「正常退出」能一眼分开（2026-10-20）
     tracing::info!("GUI 事件循环已结束 → 进程正常退出");
