@@ -468,8 +468,9 @@ pub struct Hotwords {
     pub quick_expand_min_len: usize,
     /// 打字「字词联想」：给 Rime 的 `custom_phrase` 开 `enable_completion`
     ///
-    /// 打开后**打前缀也能带出热词**（如 `g` 就能看到 GB / Gasket / GitHub…），
-    /// 属于"近似联想"；代价是候选变多、首屏可能被热词占满（2026-10-21 用户要求打开）。
+    /// ⚠️ **默认关**（2026-10-21 晚改）：打开后打任何前缀都会把所有以它开头的热词列出来，
+    /// 显示成 `相关~guan` 这种 —— 配合 `initial_quality: 1000000` 会直接占满候选窗，
+    /// 用户实测"输入法没法用"。想开的话建议只加很少的短编码。
     /// ⚠️ 这是**方案结构改动**：改完必须「立即部署」一次（一次 UAC）才生效。
     pub prefix_completion: bool,
     /// 用户词学习（`hotwords\learned.tsv`，打过的词自动置顶）；**只用于打字**
@@ -488,7 +489,7 @@ impl Default for Hotwords {
             dir: String::new(),
             asr_top_n: 30,
             phrases: true,
-            prefix_completion: true,
+            prefix_completion: false,
             quick_expand: true,
             quick_expand_min_len: 3,
             learn: true,

@@ -357,6 +357,12 @@ pub struct Gui {
     /// 热词管理器：编辑中的词条（只在开页/切换包时读盘，不每帧读）
     pub hw_terms: Vec<crate::hotwords::Term>,
     pub hw_filter: String,
+    /// 快捷输入表单：快捷键 / 词语 / 备注（2026-10-21 用户要求「三栏就够，不要权重/类别」）
+    pub hw_new_code: String,
+    pub hw_new_text: String,
+    pub hw_new_note: String,
+    /// 列表里选中的行（编辑用）
+    hw_pick: Option<usize>,
     pub hw_dirty: bool,
     pub hw_status: String,
     /// 热词管理器：「恢复内置词表」二次确认
@@ -451,6 +457,10 @@ impl Gui {
             hw_pack: String::new(),
             hw_terms: Vec::new(),
             hw_filter: String::new(),
+        hw_new_code: String::new(),
+        hw_new_text: String::new(),
+        hw_new_note: String::new(),
+        hw_pick: None,
             hw_dirty: false,
             hw_status: String::new(),
             hw_confirm_restore: false,
@@ -2307,6 +2317,129 @@ impl Gui {
                 ui.weak(self.hw_status.clone());
             }
 
+            // ---- 快捷输入：三栏表单（快捷键 / 词语 / 备注），2026-10-21 用户要求 ----
+            if self.hw_pack == crate::hotwords::PHRASES {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("快捷键");
+                    let code = ui.add(
+                        egui::TextEdit::singleline(&mut self.hw_new_code)
+                            .desired_width(110.0)
+                            .hint_text("gds"),
+                    );
+                    self.probe_note("qe_code", code.rect);
+                    ui.label("备注");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.hw_new_note)
+                            .desired_width(220.0)
+                            .hint_text("快递地址"),
+                    );
+                });
+                ui.label("词语（要上屏的完整文本，长度不限）");
+                let body = ui.add(
+                    egui::TextEdit::multiline(&mut self.hw_new_text)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(4)
+                        .hint_text("广东省深圳市南山区科技园南路 1 号 3 栋 502"),
+                );
+                self.probe_note("qe_text", body.rect);
+
+                let code_ok = {
+                    let c = self.hw_new_code.trim().to_lowercase();
+                    c.len() >= 2 && c.chars().all(|ch| ch.is_ascii_lowercase())
+                };
+                let text_ok = !self.hw_new_text.trim().is_empty();
+                ui.horizontal(|ui| {
+                    let can_add = code_ok && text_ok;
+                    let btn = ui.add_enabled(can_add, egui::Button::new("＋ 添加 / 更新"));
+                    self.probe_note("qe_add", btn.rect);
+                    if btn.clicked() {
+                        let code = self.hw_new_code.trim().to_lowercase();
+                        let text = self.hw_new_text.trim().to_string();
+                        let note = self.hw_new_note.trim().to_string();
+                        // 同快捷键视为「修改」：直接覆盖，不留重复行
+                        if let Some(t) = self.hw_terms.iter_mut().find(|t| t.code == code) {
+                            t.text = text;
+                            t.note = note;
+                        } else {
+                            self.hw_terms.push(crate::hotwords::Term {
+                                text,
+                                code,
+                                category: "快捷输入".into(),
+                                weight: 90,
+                                rank: 0,
+                                note,
+                            });
+                        }
+                        self.hw_dirty = true;
+                        self.hw_new_code.clear();
+                        self.hw_new_text.clear();
+                        self.hw_new_note.clear();
+                        self.hw_pick = None;
+                    }
+                    if ui.button("清空表单").clicked() {
+                        self.hw_new_code.clear();
+                        self.hw_new_text.clear();
+                        self.hw_new_note.clear();
+                        self.hw_pick = None;
+                    }
+                    if !code_ok && !self.hw_new_code.trim().is_empty() {
+                        ui.colored_label(egui::Color32::from_rgb(220, 120, 90), "快捷键只能用小写字母（≥2 位）");
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.hw_dirty, egui::Button::new("💾 保存到文件"))
+                        .clicked()
+                    {
+                        self.hw_save();
+                    }
+                });
+                ui.weak("添加后点「保存到文件」→ 立刻写进打字表；中文状态打快捷键 + 空格就是第一候选，英文状态由全局展开兜底。");
+
+                // 已有条目列表（快捷键 / 词语 / 备注 / 操作）
+                let mut del: Option<usize> = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("qe_scroll")
+                    .max_height(220.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Grid::new("qe_grid")
+                            .num_columns(4)
+                            .striped(true)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.strong("快捷键");
+                                ui.strong("词语");
+                                ui.strong("备注");
+                                ui.strong("");
+                                ui.end_row();
+                                for (i, t) in self.hw_terms.iter().enumerate() {
+                                    ui.monospace(&t.code);
+                                    let short: String = t.text.chars().take(40).collect();
+                                    ui.label(short);
+                                    ui.weak(&t.note);
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("编辑").clicked() {
+                                            self.hw_new_code = t.code.clone();
+                                            self.hw_new_text = t.text.clone();
+                                            self.hw_new_note = t.note.clone();
+                                            self.hw_pick = Some(i);
+                                        }
+                                        if ui.small_button("删除").clicked() {
+                                            del = Some(i);
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                if let Some(i) = del {
+                    self.hw_terms.remove(i);
+                    self.hw_dirty = true;
+                    self.hw_pick = None;
+                }
+            } else {
+
             // ---- 词条表格 ----
             let filter = self.hw_filter.trim().to_lowercase();
             let mut remove: Option<usize> = None;
@@ -2377,6 +2510,8 @@ impl Gui {
             }
             if changed {
                 self.hw_dirty = true;
+            }
+
             }
 
             // ---- 生效 ----
