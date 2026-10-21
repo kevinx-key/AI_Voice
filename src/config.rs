@@ -90,6 +90,12 @@ pub struct General {
     /// 首次整理要冷启动大模型（10~25s，本次用原文）。
     /// 档位与麦克风预热同一套：永不 / 3 / 5 / 10 / 30 分钟（见 `MODEL_RELEASE_GEARS`）。
     pub model_release_minutes: u32,
+    /// 整理后端（llama-server）空闲多少分钟停掉；0 = 常驻（默认）
+    ///
+    /// 为什么和 ASR 分开：ASR 停了只影响"第一次按下的 1.8s"（音频还在预热缓冲里），
+    /// 而 llama-server 停止后**第一次整理会退化成原文**（wait_on_first_use=false）。
+    /// 想省那 2.8GB 就设成 30 之类；默认 0 = 一直热着，保证每次都有润色。
+    pub llm_idle_stop_minutes: u32,
     /// 托管模式（`--managed`，由输入法 fork 拉起）下**是否仍然显示自己的托盘图标**（默认 true）
     ///
     /// 为什么要它（2026-10-08）：托盘图标是「正在录音」最直接的反馈，而托管模式下原本
@@ -138,7 +144,8 @@ impl Default for General {
             voice_enabled: true,
             prewarm_capture: true,
             prewarm_idle_minutes: 0,
-            model_release_minutes: 0,
+            model_release_minutes: 10,
+            llm_idle_stop_minutes: 0,
             managed_tray: true,
             gate_engine: "vad".into(),
             vad_threshold: 0.5,
@@ -973,9 +980,10 @@ mod tests {
     #[test]
     fn model_release_gear_roundtrip() {
         let mut g = General::default();
-        assert_eq!(g.model_release_minutes, 0, "默认 = 永不释放");
-        assert_eq!(g.model_release_gear(), Some(0));
-        assert_eq!(g.model_release_label(), "永不释放（推荐）");
+        // 2026-10-21：默认从「永不释放」改成 15 分钟 —— 实测空闲后能省 ~2.9GB，
+        // 代价只是第一次按下多 ~1.8s（那段音频在预热环形缓冲里，不会丢字）。
+        assert_eq!(g.model_release_minutes, 10, "默认 = 空闲 10 分钟释放");
+        assert_eq!(g.model_release_gear(), Some(3), "10 分钟对应档位 3");
         for idx in 0..MODEL_RELEASE_GEARS.len() {
             g.set_model_release_gear(idx);
             assert_eq!(g.model_release_gear(), Some(idx), "档位 {idx} 必须能原样回读");

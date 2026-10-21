@@ -912,6 +912,41 @@ struct Worker {
     llm_alive_at: Instant,
 }
 
+    /// 当前进程常驻内存（MB）：用于"释放模型前后"对比日志
+fn rss_mb() -> u64 {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        let mut c = PROCESS_MEMORY_COUNTERS::default();
+        c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        if GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb).is_ok() {
+            return (c.WorkingSetSize / 1024 / 1024) as u64;
+        }
+        0
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+
+/// 修剪工作集（`EmptyWorkingSet`）：把不活跃页换出去，任务管理器里的常驻立刻降下来
+///
+/// 只影响"报告值/页换出"，不丢数据；下次访问会再换回来（可能有一次轻微缺页）。
+/// 只在「已经释放模型、明确空闲」时调用，避免影响正在用的热路径。
+fn trim_working_set() {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        let _ = EmptyWorkingSet(GetCurrentProcess());
+    }
+}
+
 impl Worker {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -1204,10 +1239,25 @@ impl Worker {
             self.asr_retry_at = None; // 别让 30s 退避重试把它拉回来（asr_released 也会抑制）
             tracing::info!("空闲 {mins} 分钟：已释放识别模型（省内存；下次按下自动重载）");
         }
-        // `stop()` 只会回收“本程序拉起的”实例（别人的不动）且幂等；
-        // 下次整理会走 spawn_background 重新拉起（冷启动 10~25s，本次用原文）
-        self.llm.stop();
-        tracing::info!("空闲 {mins} 分钟：已停止整理后端 llama-server（省显存；下次整理冷启动）");
+        // 整理后端：默认**常驻**（停了之后第一次整理会退化成原文，体验下降）。
+        // 想省那 ~2.8GB 就把 `llm_idle_stop_minutes` 设成 30 之类。
+        let llm_min = self.cfg.general.llm_idle_stop_minutes;
+        if llm_min > 0 {
+            self.llm.stop(); // 只回收“本程序拉起的”实例，幂等
+            tracing::info!(
+                "空闲 {mins} 分钟：已停止整理后端 llama-server（省 ~2.8GB；下次整理冷启动，首次用原文）"
+            );
+        } else {
+            tracing::info!("空闲 {mins} 分钟：识别模型已释放；整理后端常驻（llm_idle_stop_minutes=0）");
+        }
+        // 释放完再修剪一次工作集：模型卸载后分配器往往还留着页，
+        // 不修剪的话任务管理器里数字下不去（用户以为"没省"）。
+        let before = rss_mb();
+        trim_working_set();
+        tracing::info!(
+            "已修剪工作集：常驻 {before} MB → {} MB（模型已卸；下次按下自动重载）",
+            rss_mb()
+        );
     }
 
     /// “人又回来用”了：清掉“已释放”标记（下次按下/会话会重新加载模型）
@@ -1220,7 +1270,8 @@ impl Worker {
         }
     }
 
-    /// 每 1s 构建全链路快照并推给界面（内容变化才推 + 5s 心跳兼底）
+
+/// 每 1s 构建全链路快照并推给界面（内容变化才推 + 5s 心跳兼底）
     ///
     /// 开销：全是原子读 + 一次字符串比较；**不 drain 环形缓冲、不碰 ASR**，
     /// 所以会话内也每秒跑（否则长口述期间卡片/托盘会一直停在旧数据）。
@@ -2465,11 +2516,15 @@ fn sync_voice_flag(paths: &Paths, enabled: bool) {
 
 fn make_llm(cfg: &Config, paths: &Paths, evt: &Sender<Evt>) -> Arc<LlamaServer> {
     let evt2 = evt.clone();
-    Arc::new(
-        LlamaServer::new(&cfg.polish.local, paths).with_sink(Arc::new(move |s: LlmState| {
-            let _ = evt2.send(Evt::LlmState(s));
-        })),
-    )
+    let server = LlamaServer::new(&cfg.polish.local, paths).with_sink(Arc::new(move |s: LlmState| {
+        let _ = evt2.send(Evt::LlmState(s));
+    }));
+    // 上一次运行被强杀时 llama-server 会变成孤儿（实测常驻 2.8GB）。开机先收掉它，
+    // 免得既复用了端口又挂着一个吃内存的僵尸。
+    if cfg.polish.enabled && cfg.polish.provider == "local" {
+        server.reap_orphan();
+    }
+    Arc::new(server)
 }
 
 /// 按 (enabled, provider, mode) 分发整理后端

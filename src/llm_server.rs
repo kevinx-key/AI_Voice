@@ -217,7 +217,70 @@ impl LlamaServer {
             self.ngl,
             self.ctx
         );
-        cmd.spawn().context("启动 llama-server 失败")
+        let child = cmd.spawn().context("启动 llama-server 失败")?;
+        // 记下 PID：进程被强杀时子进程会变成孤儿（2.8GB 常驻），
+        // 下次启动靠这个文件把它收掉（2026-10-21 实测 llama-server 孤儿占 2.8GB）
+        if let Ok(p) = self.pid_path() {
+            let _ = std::fs::write(p, child.id().to_string());
+        }
+        Ok(child)
+    }
+
+    fn pid_path(&self) -> Result<std::path::PathBuf> {
+        let dir = self
+            .log_path
+            .parent()
+            .context("日志路径没有父目录")?
+            .to_path_buf();
+        Ok(dir.join("llama.pid"))
+    }
+
+    /// 回收上一次运行遗留的 llama-server 孤儿（父进程已死的实例）
+    ///
+    /// 只在「pid 文件里的进程还活着，且镜像路径与配置的 llama-server 相同」时才动手，
+    /// 避免误杀 PID 复用出来的无关进程。
+    pub fn reap_orphan(&self) {
+        let Ok(p) = self.pid_path() else { return };
+        let Ok(text) = std::fs::read_to_string(&p) else { return };
+        let Ok(pid) = text.trim().parse::<u32>() else {
+            let _ = std::fs::remove_file(&p);
+            return;
+        };
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::{
+                OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+            };
+            let Ok(h) = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                false,
+                pid,
+            ) else {
+                let _ = std::fs::remove_file(&p); // 已退出
+                return;
+            };
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(
+                h,
+                PROCESS_NAME_FORMAT(0),
+                windows::core::PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            )
+            .is_ok();
+            let same = ok
+                && String::from_utf16_lossy(&buf[..len as usize]).to_lowercase()
+                    == self.exe.to_string_lossy().to_lowercase();
+            if same {
+                use windows::Win32::System::Threading::TerminateProcess;
+                let _ = TerminateProcess(h, 1);
+                tracing::warn!("发现上次遗留的 llama-server 孤儿（pid={pid}），已回收（省 ~2.8GB）");
+            }
+            let _ = CloseHandle(h);
+        }
+        let _ = std::fs::remove_file(&p);
     }
 
     /// 已在跑 → 复用；否则 spawn 并轮询就绪（最多 start_timeout）
