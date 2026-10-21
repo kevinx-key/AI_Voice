@@ -193,6 +193,17 @@ pub const PREWARM_GEARS: [(u32, &str); 5] = [
 
 /// 模型释放档位（界面 5 选 1；2026-10-09）
 ///
+/// 整理后端（llama-server）空闲停止档位（界面 5 选 1）
+///
+/// 0 = 常驻：每次整理都有润色；非 0 = 空闲 N 分钟后停掉，省 ~2.8GB，代价是空置后
+/// 第一次整理 `wait_on_first_use=false` 会先用原文。
+pub const LLM_IDLE_STOP_GEARS: [(u32, &str); 5] = [
+    (0, "常驻（推荐：每次都有润色）"),
+    (5, "空闲 5 分钟停"),
+    (15, "空闲 15 分钟停"),
+    (30, "空闲 30 分钟停（省 ~2.8GB）"),
+    (60, "空闲 60 分钟停"),
+];
 /// 索引 = 下标（`MODEL_RELEASE_GEARS[i]`）；`None` = config.toml 里是自改的非常规值。
 /// 与麦克风档位不同：这里没有“只在按下时开麦”那一档，基就是 5 项。
 pub const MODEL_RELEASE_GEARS: [(u32, &str); 5] = [
@@ -256,6 +267,23 @@ impl General {
         }
     }
 
+    /// 整理后端空闲停止档位索引
+    pub fn llm_idle_stop_gear(&self) -> Option<usize> {
+        LLM_IDLE_STOP_GEARS
+            .iter()
+            .position(|(m, _)| *m == self.llm_idle_stop_minutes)
+    }
+
+    pub fn set_llm_idle_stop_gear(&mut self, idx: usize) {
+        self.llm_idle_stop_minutes = LLM_IDLE_STOP_GEARS.get(idx).map(|(m, _)| *m).unwrap_or(0);
+    }
+
+    pub fn llm_idle_stop_label(&self) -> String {
+        match self.llm_idle_stop_gear() {
+            Some(i) => LLM_IDLE_STOP_GEARS[i].1.to_string(),
+            None => format!("自定义：空闲 {} 分钟停", self.llm_idle_stop_minutes),
+        }
+    }
     /// 出字间隔档位索引；`None` = config.toml 里是自改的非常规值（界面显示「自定义」）
     pub fn flush_gear(&self) -> Option<usize> {
         FLUSH_GEARS.iter().position(|(s, _)| *s == self.flush_seconds)

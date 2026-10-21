@@ -1212,13 +1212,11 @@ impl Gui {
                                         crate::config::PREWARM_GEARS.iter().enumerate()
                                     {
                                         let idx = i + 1;
-                                        let hint = if *minutes == 0 {
-                                            "预热常开、从不自动关麦：按下即录、不丢起头（推荐）。\
-                                             代价：系统麦克风指示灯常亮。"
-                                        } else {
-                                            "预热常开，但空闲这么久后自动关麦（省一点资源）。\
-                                             代价：关麦后的下一次按下会丢一次起头。"
-                                        };
+let hint = if *minutes == 0 {
+    "空闲也不卸载识别模型：下一次按下最快。代价：常驻约 1.5GB。"
+} else {
+    "空闲这么久就把识别模型卸载（实测 listen 常驻 2977→41MB）。代价：空闲后第一次按下多约 +1.8s；说的话进 3 秒预热缓冲，不会丢字。"
+};
                                         if ui
                                             .selectable_label(cur == Some(idx), *text)
                                             .on_hover_text(hint)
@@ -1271,8 +1269,46 @@ impl Gui {
                                 });
                         });
                         ui.weak(
-                            "空闲后卸载识别模型 + 停掉整理后端（避免占内存/显存）；默认「永不释放」，与麦克风预热相互独立",
+                            "只卸载识别模型（约 1.5GB）；整理后端见下一行。默认空闲 10 分钟，与麦克风预热相互独立",
                         );
+                        ui.end_row();
+
+                        ui.label("整理后端停止");
+                        ui.horizontal(|ui| {
+                            let cur = self.cfg.general.llm_idle_stop_gear();
+                            egui::ComboBox::from_id_salt("llm_idle_stop")
+                                .selected_text(self.cfg.general.llm_idle_stop_label())
+                                .width(240.0)
+                                .show_ui(ui, |ui| {
+                                    if cur.is_none() {
+                                        let _ = ui.selectable_label(
+                                            true,
+                                            self.cfg.general.llm_idle_stop_label(),
+                                        );
+                                    }
+                                    for (idx, (m, text)) in
+                                        crate::config::LLM_IDLE_STOP_GEARS.iter().enumerate()
+                                    {
+                                        let hint = if *m == 0 {
+                                            "llama-server 一直热着：每次整理都有润色。代价：常驻约 2.8GB（独立进程）"
+                                        } else {
+                                            "空闲这么久就停掉 llama-server（省约 2.8GB）。代价：空置后第一次整理先出原文（冷启动 10~25s）"
+                                        };
+                                        if ui
+                                            .selectable_label(cur == Some(idx), *text)
+                                            .on_hover_text(hint)
+                                            .clicked()
+                                        {
+                                            self.cfg.general.set_llm_idle_stop_gear(idx);
+                                            touch!(self);
+                                        }
+                                    }
+                                });
+                        });
+                        ui.weak(
+                            "llama-server 是独立进程（约 2.8GB）；停掉后空置期第一次整理用原文，之后照常润色",
+                        );
+                        ui.end_row();
                         ui.end_row();
 
                         ui.label("出字间隔");
