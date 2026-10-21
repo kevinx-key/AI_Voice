@@ -88,9 +88,9 @@ if ($Setup) {
     Write-Host "==> building installer (Inno Setup)" -ForegroundColor Cyan
     $iss = Join-Path $root "installer\listen.iss"
     if ($NoLM) {
-        & $iscc "/DIncludeLM=0" $iss
+        & $iscc "/DIncludeLM=0" "/DAppVer=$ver" $iss
     } else {
-        & $iscc "/DIncludeLM=1" $iss
+        & $iscc "/DIncludeLM=1" "/DAppVer=$ver" $iss
     }
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
     Get-ChildItem (Join-Path $dist "listen-*-setup.exe") |

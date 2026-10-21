@@ -11,7 +11,7 @@
 ;         再询问是否一并卸载倾听输入法本体
 
 #define AppName "倾听输入法"
-#define AppVer "0.1.0"
+#define AppVer "0.1.1"
 #define AppExe "listen.exe"
 #define AppPublisher "kevin"
 

@@ -31,7 +31,7 @@ model_release_minutes = 0  # 空闲多久后**释放模型**（分钟；**0 = �
                            # 释放 = 卸载 ASR 识别模型（省内存）+ 停掉本程序拉起的 llama-server（省显存）
                            # 代价：空闲后第一次按下要重载识别模型（实测 ~1.8s）；首次整理冷启动 10~25s（本次用原文）
                            # 档位与预热同一套：永不 / 3 / 5 / 10 / 30 分钟（与麦克风预热相互独立）
-gui_render = "auto"        # 界面渲染后端：auto=集显优先（没有集显就用独显）；gpu=强制独显；
+gui_render = "glow"        # 渲染后端：glow=OpenGL（默认，实测省 ~84MB）/ auto=wgpu 集显优先 / gpu=强制独显 / software=WARP 别用（吃 9.5 核）
                            # software=强制软件光栅（能彻底避开独显争用导致的界面定格，
                            #   但实测 CPU 代价 3~16 个核，只在“界面明显卡”时才试）
 autostart = false

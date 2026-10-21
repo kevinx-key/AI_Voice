@@ -461,7 +461,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify_rime.ps1 -Lang zh
 powershell -ExecutionPolicy Bypass -File tools\verify_rime.ps1 -AfterUninstall
 # 取资源（国内镜像优先，约 622MB）
 powershell -ExecutionPolicy Bypass -File installer\fetch_resources.ps1
-# 二合一安装包（含语法模型，约 417MB / 417,513,301 B；-NoLM 可省掉 400MB 语法模型）
+# 二合一安装包（含语法模型，约 417,664,606 B；-NoLM 可省掉 400MB 语法模型）
 powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Setup
 ```
 
@@ -746,7 +746,7 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Setup -NoLM   # �
 |------|------|------|
 | `listen.exe`（静态 sherpa-onnx + 静态 CRT，单文件无 DLL） | **38.6 MB** | — |
 | 绿色 zip（不含模型） | **15.2 MB** | — |
-| 二合一安装包 `dist\listen-*-setup.exe`（含 Rime 资源约 622MB，其中语法模型 400MB） | **417,513,301 B（≈398 MiB）**，2026-10-21 重打，SHA `4af99020…` | — |
+| 二合一安装包 `dist\listen-*-setup.exe`（含 Rime 资源约 622MB，其中语法模型 400MB） | **417,664,606 B（≈398 MiB）**，v0.1.1（2026-10-22），SHA `9c59a972…` | — |
 | 模型（首次运行下载） | 230 MB | — |
 
 > 体积构成：本体 26.1MB（ASR + 网络 + 托盘）+ GUI（egui/eframe）6.5MB。

@@ -150,7 +150,7 @@ impl Default for General {
             gate_engine: "vad".into(),
             vad_threshold: 0.5,
             vad_min_speech_seconds: 0.25,
-            gui_render: "auto".into(),
+            gui_render: "glow".into(),
         }
     }
 }
