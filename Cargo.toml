@@ -32,6 +32,10 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_Window
 # 本地 patch：移除 espeak-ng(GPL-3.0)/piper_phonemize 静态链接（改用官方 no-tts 预编译库）
 # 背景与验证方法见 vendor/sherpa-onnx-sys/build.rs 顶部注释
 sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }
+# winit 0.30.13 的 MonitorHandle::size()/name() 在显示器休眠或拔插后句柄失效时 unwrap panic
+# （错误码 1461），会把主线程崩掉并留下托盘幽灵图标（2026-10-21 实测 last_panic.prev.txt）。
+# vendor 一份改容错，避免为此重启整个程序。
+winit = { path = "vendor/winit" }
 
 [profile.release]
 opt-level = 3
