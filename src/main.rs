@@ -14,6 +14,7 @@ mod ctl;
 mod gui;
 mod hotkey;
 mod hotwords;
+mod install;
 mod gate;
 mod inject;
 mod llm_server;
@@ -37,6 +38,8 @@ use llm_server::{LlamaServer, LlmState};
 use polish::{NoopPolisher, Polisher};
 use state::State;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -100,6 +103,9 @@ struct Cli {
     /// 下载本地模型后退出
     #[arg(long)]
     download_model: bool,
+    /// 下载并配置识别/整理模型后退出（调试用；隐藏参数）
+    #[arg(long, hide = true)]
+    install_models: bool,
     /// 设置开机自启后退出（true/false）
     #[arg(long, value_name = "BOOL")]
     autostart: Option<bool>,
@@ -177,6 +183,12 @@ enum Cmd {
     Resume,
     /// 一键修复（链路状态卡按钮）：重装钩子 + 重开麦 + 重新加载模型/整理后端
     Repair,
+    /// 首次开启语音引擎时自动下载 + 配置模型（2026-10-22）
+    InstallModels,
+    /// 取消下载并清除已下载的文件
+    CancelInstall,
+    /// 安装线程干完活（内部用；回 worker 写配置/重载）
+    InstallFinished(Result<Box<install::Plan>, String>),
     Quit,
 }
 
@@ -200,6 +212,8 @@ enum Evt {
     /// 全链路状态快照（2026-10-09，链路状态卡片/托盘 tooltip）：
     /// worker 每秒构建一次，**内容变化才发**，另每 5s 发一次心跳兼底
     Chain(Box<Chain>),
+    /// 模型下载/自动配置进度（2026-10-22）
+    Install(Box<install::Progress>),
 }
 
 /// GUI 的 wgpu 配置：集显优先 + 不等垂直同步（2026-10-08，见《项目调试过程.md》§19）
@@ -361,6 +375,30 @@ fn main() -> Result<()> {
         let dir = paths.resolve(&cfg.asr.local_model);
         let log = |m: String| println!("{m}");
         models::ensure_model(&dir, &log)?;
+        return Ok(());
+    }
+    // 调试/回归用：前台跑一遍「下载 + 配置模型」，进度直接打到 stdout
+    if cli.install_models {
+        let plan = install::plan_for(&cfg, &paths.root);
+        println!("模型目录: {}", plan.root.display());
+        println!("识别模型: {}（已就绪={}）", plan.asr_url, plan.asr_ready());
+        println!(
+            "整理模型: {}（已就绪={}，本次{}）",
+            plan.gguf_url,
+            plan.polish_ready(),
+            if plan.install_polish { "安装" } else { "跳过" }
+        );
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut last = String::new();
+        let mut cb = |p: install::Progress| {
+            let line = format!("[{}] {}", p.phase.label(), p.msg);
+            if line != last {
+                last = line.clone();
+                println!("{line}");
+            }
+        };
+        install::install(&plan, &cancel, &mut cb)?;
+        println!("完成。识别={} 整理={}", plan.asr_ready(), plan.polish_ready());
         return Ok(());
     }
     if let Some(on) = cli.autostart {
@@ -566,6 +604,7 @@ fn main() -> Result<()> {
     let worker_hook = hook_slot.clone();
     let worker_chain = chain_state.clone();
     let worker_managed = cli.managed;
+    let worker_cmd_tx = cmd_tx.clone();
     std::thread::Builder::new()
         .name("worker".into())
         .spawn(move || {
@@ -579,6 +618,7 @@ fn main() -> Result<()> {
                 worker_hook,
                 worker_chain,
                 worker_managed,
+                worker_cmd_tx.clone(),
             );
             w.run(cmd_rx);
         })
@@ -860,6 +900,12 @@ struct Worker {
     hook: HookSlot,
     /// 已挂起（托管）：不可开会话、模型已释放
     suspended: bool,
+    /// 命令通道（模型安装线程用它把 InstallFinished 送回 worker 循环）
+    cmd_tx: Sender<Cmd>,
+    /// 模型安装：是否在跑 / 取消标志 / 最近进度（界面关掉再打开也能看到）
+    installing: Arc<AtomicBool>,
+    install_cancel: Arc<AtomicBool>,
+    install_progress: Arc<Mutex<install::Progress>>,
     polisher: Arc<dyn Polisher + Send + Sync>,
     /// 输出线程：整理 + 注入（与录音解耦，避免整理/注入阻塞下一次录音）
     out_tx: Sender<OutputJob>,
@@ -981,6 +1027,7 @@ impl Worker {
         hook: HookSlot,
         chain: ChainState,
         managed: bool,
+        cmd_tx: Sender<Cmd>,
     ) -> Self {
         let gate_used = cfg.general.gate_engine.clone();
         let voice_enabled = cfg.general.voice_enabled;
@@ -1032,6 +1079,7 @@ impl Worker {
         let cfg_stamp0 = cfg_stamp(&paths.config_file);
         let mut w = Self {
             paths,
+            cmd_tx,
             cfg,
             evt,
             asr,
@@ -1042,6 +1090,9 @@ impl Worker {
             hk_tx,
             hook,
             suspended: false,
+            installing: Arc::new(AtomicBool::new(false)),
+            install_cancel: Arc::new(AtomicBool::new(false)),
+            install_progress: Arc::new(Mutex::new(install::Progress::default())),
             polisher,
             out_tx,
             llm,
@@ -1242,6 +1293,132 @@ impl Worker {
             && self.last_active.elapsed() >= Duration::from_secs(rel_min as u64 * 60)
         {
             self.release_idle_models(rel_min);
+        }
+    }
+
+
+    /// 模型安装的计划（URL/开关/目录都来自配置）
+    fn install_plan(&self) -> install::Plan {
+        install::plan_for(&self.cfg, &self.paths.root)
+    }
+
+    /// 开始「下载 + 配置模型」（在独立线程跑：关掉设置页也不打断）
+    fn start_model_install(&mut self) {
+        if self.installing.load(Ordering::SeqCst) {
+            tracing::info!("模型安装已在跑，忽略重复请求");
+            return;
+        }
+        let plan = self.install_plan();
+        tracing::info!(
+            "开始下载/配置模型：{}（识别）{}（整理）→ {}",
+            plan.asr_url,
+            if plan.install_polish { plan.gguf_url.as_str() } else { "跳过" },
+            plan.root.display()
+        );
+        self.installing.store(true, Ordering::SeqCst);
+        self.install_cancel.store(false, Ordering::SeqCst);
+        let cancel = self.install_cancel.clone();
+        let progress = self.install_progress.clone();
+        let evt = self.evt.clone();
+        let tx = self.cmd_tx.clone();
+        let plan_for_thread = install::Plan {
+            asr_url: plan.asr_url.clone(),
+            gguf_url: plan.gguf_url.clone(),
+            install_polish: plan.install_polish,
+            root: plan.root.clone(),
+            existing_asr: plan.existing_asr.clone(),
+            existing_gguf: plan.existing_gguf.clone(),
+        };
+        std::thread::Builder::new()
+            .name("model-install".into())
+            .spawn(move || {
+                let mut cb = |p: install::Progress| {
+                    if p.phase == install::Phase::Asr || p.phase == install::Phase::Polish {
+                        if let Ok(mut g) = progress.lock() {
+                            *g = p.clone();
+                        }
+                    }
+                    let _ = evt.send(Evt::Install(Box::new(p)));
+                };
+                let res = install::install(&plan_for_thread, &cancel, &mut cb);
+                let _ = tx.send(Cmd::InstallFinished(match res {
+                    Ok(()) => Ok(Box::new(plan_for_thread)),
+                    Err(e) => Err(format!("{e:#}")),
+                }));
+            })
+            .ok();
+    }
+
+    /// 取消安装：置标志 + 立刻清掉已下载/已解开的文件（worker 线程做，不卡界面）
+    fn cancel_model_install(&mut self) {
+        if !self.installing.load(Ordering::SeqCst) {
+            return;
+        }
+        tracing::warn!("用户取消模型安装 → 停止下载并清除已下载文件");
+        self.install_cancel.store(true, Ordering::SeqCst);
+        let plan = self.install_plan();
+        // 等下载线程退出（下载循环每块检查标志，正常 1 秒内退出）
+        for _ in 0..50 {
+            if !self.installing.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let removed = install::cleanup(&plan);
+        tracing::warn!("已清除 {} 个文件/目录（取消安装）", removed.len());
+        if let Ok(mut g) = self.install_progress.lock() {
+            *g = install::Progress {
+                phase: install::Phase::Cancelled,
+                msg: "已取消，已下载的文件已删除".into(),
+                overall: 0.0,
+                ..Default::default()
+            };
+        }
+        let _ = self.evt.send(Evt::Install(Box::new(install::Progress {
+            phase: install::Phase::Cancelled,
+            msg: "已取消，已下载的文件已删除".into(),
+            overall: 0.0,
+            ..Default::default()
+        })));
+    }
+
+    /// 安装线程结束：成功 → 写配置 + 重载；失败 → 报错（除非是用户取消）
+    fn finish_model_install(&mut self, res: Result<Box<install::Plan>, String>) {
+        self.installing.store(false, Ordering::SeqCst);
+        match res {
+            Ok(plan) => {
+                tracing::info!("模型安装完成 → 写入配置并重载识别后端");
+                let mut c = Config::load_or_create(&self.paths).unwrap_or_else(|_| self.cfg.clone());
+                c.asr.model_type = "funasr-nano".into();
+                c.asr.funasr_nano_model = plan.asr_dir().display().to_string();
+                if plan.install_polish {
+                    c.polish.local.model = plan.gguf_path().display().to_string();
+                }
+                match c.save(&self.paths) {
+                    Ok(()) => {
+                        let _ = self.evt.send(Evt::Install(Box::new(install::Progress {
+                            phase: install::Phase::Done,
+                            msg: "模型就绪，正在加载识别后端…".into(),
+                            overall: 1.0,
+                            ..Default::default()
+                        })));
+                        self.reload_config("模型安装完成后写入配置");
+                    }
+                    Err(e) => tracing::error!("写入配置失败: {e:#}"),
+                }
+            }
+            Err(e) => {
+                if self.install_cancel.load(Ordering::SeqCst) {
+                    tracing::warn!("模型安装已取消: {e}");
+                } else {
+                    tracing::error!("模型安装失败: {e}");
+                    let _ = self.evt.send(Evt::Install(Box::new(install::Progress {
+                        phase: install::Phase::Failed,
+                        msg: format!("安装失败：{e}"),
+                        ..Default::default()
+                    })));
+                }
+            }
         }
     }
 
@@ -1600,6 +1777,9 @@ impl Worker {
             }
             Cmd::LlmStop => self.llm.stop(),
             Cmd::Repair => self.repair(),
+            Cmd::InstallModels => self.start_model_install(),
+            Cmd::CancelInstall => self.cancel_model_install(),
+            Cmd::InstallFinished(res) => self.finish_model_install(res),
             Cmd::ReloadHotwords => {
                 // 热词表 tsv 改过（配置没变）：整理 prompt 的术语表 + ASR 热词都要换新的
                 tracing::info!("热词表已更新，重建识别/整理后端");
@@ -1670,6 +1850,22 @@ impl Worker {
                         self.voice_on();
                     } else {
                         self.voice_off();
+                    }
+                }
+                // 首次开启语音引擎 + 模型缺失 → 自动下载并配置（2026-10-22 用户需求）
+                // 注意：只在「用户把开关打开」或「模型确实缺失」时触发一次，不打扰后续使用
+                if self.voice_enabled && self.cfg.models.auto_install {
+                    let plan = self.install_plan();
+                    if plan.needed() && !self.installing.load(Ordering::SeqCst) {
+                        tracing::info!(
+                            "语音引擎已开启但模型缺失 → 自动开始下载/配置（关掉设置页不会中断）"
+                        );
+                        let _ = self.evt.send(Evt::Install(Box::new(install::Progress {
+                            phase: install::Phase::Preparing,
+                            msg: "准备下载模型…".into(),
+                            ..Default::default()
+                        })));
+                        self.start_model_install();
                     }
                 }
                 // 挂起/加载中/总开关 OFF 不重建识别后端（等 RESUME / 开关开启统一加载）

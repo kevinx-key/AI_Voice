@@ -110,3 +110,10 @@ quick_expand_min_len = 3   # 触发展开的最短编码长度
 # terms = ["nRF54L15"]
 # aliases = ["欧拉马=Ollama"]   # ASR 常把英文音译成中文
 # corrections = ["grape=grep"] # 英文同音错词（整词、忽略大小写）
+
+[models]                  # 首次开启语音引擎时自动下载/配置（装完安装包不含模型）
+auto_install = true       # 关掉就只提示缺模型，不自动下载
+install_polish = true     # false = 只装识别模型（省 2.4GB；整理关闭时没影响）
+asr_url = ""              # 识别模型下载地址（空 = 内置 FunASR-Nano fp16 官方包，约 982MB）
+gguf_url = ""             # 整理模型下载地址（空 = 内置 Qwen3-4B Q4_K_M，约 2.4GB）
+dir = ""                  # 安装目录（空 = exe 同级 models\）

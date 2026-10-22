@@ -17,6 +17,7 @@ pub struct Config {
     pub glossary: Glossary,
     pub hotwords: Hotwords,
     pub bench: Bench,
+    pub models: Models,
 }
 
 impl Default for Config {
@@ -32,6 +33,7 @@ impl Default for Config {
             glossary: Glossary::default(),
             hotwords: Hotwords::default(),
             bench: Bench::default(),
+            models: Models::default(),
         }
     }
 }
@@ -142,7 +144,8 @@ impl Default for General {
             log_level: "info".into(),
             device: String::new(),
             managed_suspend_exit_minutes: 0,
-            voice_enabled: true,
+            // 2026-10-22：出厂默认**关闭**语音引擎 —— 首次开启时再自动下载/配置模型（避免装完就占 4GB）
+            voice_enabled: false,
             prewarm_capture: true,
             prewarm_idle_minutes: 0,
             model_release_minutes: 10,
@@ -595,6 +598,33 @@ impl Default for Glossary {
     }
 }
 
+/// 首次开启语音引擎时自动下载/配置的模型（2026-10-22）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Models {
+    /// 首次开启语音引擎时自动下载并配置（关掉则只在链路卡片提示"缺模型"）
+    pub auto_install: bool,
+    /// 是否连「整理模型」(GGUF) 一起装；false = 只装识别模型（省 2.4GB）
+    pub install_polish: bool,
+    /// 识别模型下载地址（空 = 内置默认：sherpa-onnx release 的 FunASR-Nano fp16 包）
+    pub asr_url: String,
+    /// 整理模型下载地址（空 = 内置默认：Qwen3-4B GGUF Q4_K_M）
+    pub gguf_url: String,
+    /// 安装目录（空 = exe 同级 models\）
+    pub dir: String,
+}
+
+impl Default for Models {
+    fn default() -> Self {
+        Self {
+            auto_install: true,
+            install_polish: true,
+            asr_url: String::new(),
+            gguf_url: String::new(),
+            dir: String::new(),
+        }
+    }
+}
 /// 热词包：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置 + 术语保留）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -779,7 +809,8 @@ impl Default for Asr {
             language: String::new(),
             local_model: "models/sense-voice".into(),
             model_type: "sensevoice".into(),
-            funasr_nano_model: r"K:\AI_Voice\models\asr\sherpa-onnx-funasr-nano-fp16-2025-12-30".into(),
+            // 空 = 用标准安装位 `<models>\asr\sherpa-onnx-funasr-nano-fp16-2025-12-30`
+            funasr_nano_model: String::new(),
             hotwords_score: 1.5,
             num_threads: 4,
             cloud: CloudAsr::default(),

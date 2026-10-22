@@ -20,6 +20,21 @@ fn is_funasr_nano(model_type: &str) -> bool {
 }
 
 /// 按配置实例化后端（本地模型常驻，避免每次加载）
+/// FunASR-Nano 模型目录：配置为空时用标准安装位（安装器下载到这里）
+pub fn funasr_dir(cfg: &Config, paths: &Paths) -> std::path::PathBuf {
+    let p = cfg.asr.funasr_nano_model.trim();
+    if p.is_empty() {
+        let base = if cfg.models.dir.trim().is_empty() {
+            paths.root.join("models")
+        } else {
+            std::path::PathBuf::from(cfg.models.dir.trim())
+        };
+        base.join("asr").join(crate::install::ASR_DIR)
+    } else {
+        paths.resolve(p)
+    }
+}
+
 pub fn build(cfg: &Config, paths: &Paths) -> Result<Box<dyn AsrBackend>> {
     match cfg.asr.backend.as_str() {
         "cloud" => Ok(Box::new(cloud::CloudAsr::new(
@@ -27,7 +42,7 @@ pub fn build(cfg: &Config, paths: &Paths) -> Result<Box<dyn AsrBackend>> {
             &cfg.asr.language,
         )?)),
         _ if is_funasr_nano(&cfg.asr.model_type) => {
-            let dir = paths.resolve(&cfg.asr.funasr_nano_model);
+            let dir = funasr_dir(cfg, paths);
             let terms = hotword_terms(cfg, paths);
             tracing::info!(
                 "热词 {} 条（前 {} 条进 FunASR prompt）",
@@ -125,7 +140,7 @@ fn write_hotwords(paths: &Paths, cfg: &Config, terms: &[String]) -> Option<PathB
 /// - funasr-nano：encoder_adaptor/llm/embedding 三个 onnx + tokenizer 目录
 pub fn local_model_ready(paths: &Paths, cfg: &Config) -> bool {
     if is_funasr_nano(&cfg.asr.model_type) {
-        let dir = paths.resolve(&cfg.asr.funasr_nano_model);
+        let dir = funasr_dir(cfg, paths);
         let has = |stem: &str| {
             std::fs::read_dir(&dir)
                 .map(|rd| {

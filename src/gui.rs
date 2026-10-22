@@ -372,6 +372,8 @@ pub struct Gui {
     pub hw_status: String,
     /// 热词管理器：「恢复内置词表」二次确认
     hw_confirm_restore: bool,
+    /// 模型下载/自动配置进度（None = 没在装也没结果）
+    install: Option<crate::install::Progress>,
     /// 全链路快照（worker 每秒推 `Evt::Chain`；顶部链路状态卡与托盘 tooltip 共用）
     pub chain: crate::chain::Chain,
     /// 悬浮窗：批次文本
@@ -427,6 +429,7 @@ impl Gui {
         let tray = tray::build(&ms).ok();
         let rime_info = crate::rime::detect(&cfg.rime.user_dir);
         Self {
+            install: None,
             paths,
             cfg,
             cmd_tx,
@@ -646,6 +649,9 @@ impl Gui {
                 // 门控实时读数（worker 已节流），只是覆盖一个值，不做任何分配
                 Evt::Gate { speech, rms } => {
                     self.float_gate = Some((speech, rms));
+                }
+                Evt::Install(p) => {
+                    self.install = Some(*p);
                 }
                 Evt::Chain(c) => {
                     // 全链路快照：顶部卡片 + 托盘 tooltip 一起刷新
@@ -1447,7 +1453,97 @@ let hint = if *minutes == 0 {
             });
     }
 
+    /// 模型下载 / 自动配置进度面板（2026-10-22）
+    ///
+    /// 需求：设置页要能看到下载进度与自动配置进度；提供「取消」并**删除已下载文件**；
+    /// 只是关掉设置页 **不打断**（下载在 worker 线程跑，这里只显示与发取消）。
+    fn install_panel(&mut self, ui: &mut egui::Ui) {
+        let plan = crate::install::plan_for(&self.cfg, &self.paths.root);
+        let missing = plan.needed();
+        let running = self.install.as_ref().map(|p| {
+            !matches!(
+                p.phase,
+                crate::install::Phase::Done
+                    | crate::install::Phase::Cancelled
+                    | crate::install::Phase::Failed
+            )
+        }).unwrap_or(false);
+
+        if !missing && self.install.is_none() {
+            return;
+        }
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("本地模型");
+                if running {
+                    ui.colored_label(egui::Color32::from_rgb(230, 160, 40), "下载 / 配置中…");
+                } else if missing {
+                    ui.weak(format!(
+                        "缺模型（识别{} + 整理{}，共约 4GB）",
+                        if plan.asr_ready() { " 已就绪" } else { " 缺失" },
+                        if plan.install_polish {
+                            if plan.polish_ready() { " 已就绪" } else { " 缺失" }
+                        } else {
+                            " 已跳过"
+                        }
+                    ));
+                }
+            });
+
+            if let Some(p) = &self.install {
+                if !matches!(p.phase, crate::install::Phase::Done) || missing {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("阶段：{}", p.phase.label()));
+                        if p.total > 0 {
+                            let frac = p.done as f32 / p.total as f32;
+                            ui.add(
+                                egui::ProgressBar::new(frac.clamp(0.0, 1.0))
+                                    .desired_width(220.0)
+                                    .show_percentage(),
+                            );
+                        }
+                        ui.weak(&p.msg);
+                    });
+                    if matches!(p.phase, crate::install::Phase::Failed) {
+                        ui.colored_label(egui::Color32::from_rgb(220, 120, 90), &p.msg);
+                    }
+                }
+            }
+
+            ui.horizontal(|ui| {
+                if running {
+                    if ui
+                        .button("✖ 取消下载并删除文件")
+                        .on_hover_text("停止下载，并把已经下载/解压出来的文件删掉（不留半成品）")
+                        .clicked()
+                    {
+                        let _ = self.cmd_tx.send(Cmd::CancelInstall);
+                    }
+                    ui.weak("关掉设置页不会打断下载（在后台继续，重新打开可看进度）");
+                } else {
+                    if ui
+                        .button("⬇ 下载并配置模型（约 4GB）")
+                        .on_hover_text("下载 FunASR-Nano 识别模型 + Qwen3-4B 整理模型，并自动写好配置")
+                        .clicked()
+                    {
+                        self.install = Some(crate::install::Progress {
+                            phase: crate::install::Phase::Preparing,
+                            msg: "准备下载…".into(),
+                            ..Default::default()
+                        });
+                        let _ = self.cmd_tx.send(Cmd::InstallModels);
+                    }
+                    if !self.cfg.models.install_polish {
+                        ui.weak("（配置里关掉了整理模型：只装识别模型）");
+                    }
+                }
+            });
+        });
+        ui.add_space(4.0);
+    }
+
     fn section_asr(&mut self, ui: &mut egui::Ui) {
+        self.install_panel(ui);
         egui::CollapsingHeader::new("识别")
             .default_open(true)
             .show(ui, |ui| {
