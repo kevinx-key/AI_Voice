@@ -11,7 +11,10 @@
 ;         再询问是否一并卸载倾听输入法本体
 
 #define AppName "倾听输入法"
-#define AppVer "0.1.1"
+; 版本号：优先用 build.ps1 传进来的 /DAppVer=<ver>（从 Cargo.toml 读），没传才用这里的兜底
+#ifndef AppVer
+  #define AppVer "0.1.2"
+#endif
 #define AppExe "listen.exe"
 #define AppPublisher "kevin"
 

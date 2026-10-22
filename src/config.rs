@@ -129,12 +129,13 @@ impl Default for General {
         Self {
             hotkey: "f9".into(),
             raw_hotkey: "shift+f9".into(),
-            hotkey_mode: "hold".into(),
+            // 用户机器上的取值：按一下开始 / 再按一下停止（长口述更现实，2026-10-22 对齐）
+            hotkey_mode: "toggle".into(),
             max_session_minutes: 30,
             segment_seconds: 3,
             silence_seconds: 0.5,
-            drop_short_english: true,
-            flush_seconds: 20,
+            drop_short_english: false,
+            flush_seconds: 10,
             min_speech_rms: 0.0015,
             min_record_seconds: 0.2,
             autostart: false,
@@ -145,7 +146,7 @@ impl Default for General {
             prewarm_capture: true,
             prewarm_idle_minutes: 0,
             model_release_minutes: 10,
-            llm_idle_stop_minutes: 0,
+            llm_idle_stop_minutes: 30,
             managed_tray: true,
             gate_engine: "vad".into(),
             vad_threshold: 0.5,
@@ -161,8 +162,8 @@ impl Default for General {
 /// 我希望提供一个选项让用户自己选每 10/20/40/60 秒输出一次」。
 /// 语义是「每满这么久，就把这期间识别出来的文字整理后上屏一次」（会话结束仍会立刻吐完）。
 pub const FLUSH_GEARS: [(u32, &str); 4] = [
-    (10, "每 10 秒（最跟手，整理调用最频繁）"),
-    (20, "每 20 秒（推荐，默认）"),
+    (10, "每 10 秒（默认，最跟手；整理调用最频繁）"),
+    (20, "每 20 秒"),
     (40, "每 40 秒"),
     (60, "每 60 秒（最省，长口述每 1 分钟才出一次字）"),
 ];
@@ -426,7 +427,7 @@ impl Default for Floating {
         Self {
             enabled: true,
             font_size: 16,
-            history: 3,
+            history: 1,
             max_chars: 60,
             hide_delay_seconds: 1,
             show_text: false,
@@ -472,7 +473,122 @@ impl Default for Glossary {
     fn default() -> Self {
         Self {
             enabled: true,
-            terms: Vec::new(),
+            // 出厂术语表（2026-10-22 对齐用户机器）：AI / 嵌入式 / 开发链常用词，
+            // 识别时按原样保留、不被同音词改写。用户可自行增删。
+            terms: vec![
+            "Ollama".into(),
+            "Qwen".into(),
+            "GPT".into(),
+            "ChatGPT".into(),
+            "Claude".into(),
+            "Codex".into(),
+            "Cursor".into(),
+            "Copilot".into(),
+            "OpenAI".into(),
+            "Anthropic".into(),
+            "DeepSeek".into(),
+            "HuggingFace".into(),
+            "GitHub".into(),
+            "GitLab".into(),
+            "Git".into(),
+            "commit".into(),
+            "branch".into(),
+            "merge".into(),
+            "rebase".into(),
+            "push".into(),
+            "pull".into(),
+            "Docker".into(),
+            "Kubernetes".into(),
+            "Linux".into(),
+            "Ubuntu".into(),
+            "Debian".into(),
+            "WSL".into(),
+            "Rust".into(),
+            "cargo".into(),
+            "Python".into(),
+            "pip".into(),
+            "Node.js".into(),
+            "npm".into(),
+            "TypeScript".into(),
+            "JavaScript".into(),
+            "React".into(),
+            "Vue".into(),
+            "Tauri".into(),
+            "WebAssembly".into(),
+            "WASM".into(),
+            "VS Code".into(),
+            "Vim".into(),
+            "Neovim".into(),
+            "CMake".into(),
+            "Makefile".into(),
+            "clang".into(),
+            "gcc".into(),
+            "API".into(),
+            "SDK".into(),
+            "CLI".into(),
+            "GUI".into(),
+            "JSON".into(),
+            "YAML".into(),
+            "TOML".into(),
+            "HTTP".into(),
+            "HTTPS".into(),
+            "TCP".into(),
+            "UDP".into(),
+            "USB".into(),
+            "BLE".into(),
+            "UART".into(),
+            "SPI".into(),
+            "I2C".into(),
+            "GPIO".into(),
+            "ADC".into(),
+            "SAADC".into(),
+            "PWM".into(),
+            "MCU".into(),
+            "SoC".into(),
+            "firmware".into(),
+            "driver".into(),
+            "bootloader".into(),
+            "DFU".into(),
+            "OTA".into(),
+            "RTOS".into(),
+            "FreeRTOS".into(),
+            "Zephyr".into(),
+            "QMK".into(),
+            "nRF52832".into(),
+            "nRF52840".into(),
+            "nRF5340".into(),
+            "STM32".into(),
+            "ESP32".into(),
+            "APM32".into(),
+            "ARM".into(),
+            "Cortex-M".into(),
+            "RISC-V".into(),
+            "Altium".into(),
+            "KiCad".into(),
+            "Gerber".into(),
+            "PCB".into(),
+            "PCBA".into(),
+            "LLM".into(),
+            "ASR".into(),
+            "TTS".into(),
+            "ONNX".into(),
+            "GGUF".into(),
+            "llama.cpp".into(),
+            "SenseVoice".into(),
+            "Whisper".into(),
+            "transformer".into(),
+            "token".into(),
+            "prompt".into(),
+            "embedding".into(),
+            "context".into(),
+            "VRAM".into(),
+            "GPU".into(),
+            "CPU".into(),
+            "refactor".into(),
+            "debug".into(),
+            "build".into(),
+            "deploy".into(),
+            ],
             aliases: default_glossary_aliases(),
             corrections: default_glossary_corrections(),
         }
@@ -844,7 +960,7 @@ impl Default for Inject {
 }
 
 /// Rime 输入法（倾听输入法）二合一配置
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rime {
     /// 资源目录（空 = 自动：exe 同级 resources\，找不到再往上级找）
@@ -867,6 +983,22 @@ pub struct Rime {
     pub last_deploy: String,
 }
 
+impl Default for Rime {
+    fn default() -> Self {
+        Self {
+            resources: String::new(),
+            user_dir: String::new(),
+            primary_lang: String::new(),
+            // 2026-10-22 对齐用户机器：英文方案默认放进方案列表（F4 可切）、万象语法模型默认开
+            english_mixed: true,
+            zh_trad: false,
+            grammar: true,
+            weasel_version: String::new(),
+            weasel_installed_by_us: false,
+            last_deploy: String::new(),
+        }
+    }
+}
 impl Rime {
     pub fn lang(&self) -> crate::rime::schemes::Lang {
         crate::rime::schemes::Lang::from_str(&self.primary_lang)
@@ -1039,8 +1171,9 @@ mod tests {
     #[test]
     fn hotkey_mode_accepts_common_spellings() {
         let mut g = General::default();
-        assert!(!g.is_toggle_mode(), "默认 = 按住说话");
-        assert_eq!(g.mode_label(), "按住说话");
+        // 2026-10-22：出厂默认改成「切换」（用户机器上的取值；长口述按 20 分钟不现实）
+        assert!(g.is_toggle_mode(), "默认 = 切换模式");
+        assert_eq!(g.mode_label(), "切换（按一下开始 / 再按一下停止）");
 
         for v in ["toggle", "Toggle", " TOGGLE ", "switch", "切换", "切换模式"] {
             g.hotkey_mode = v.to_string();
@@ -1087,11 +1220,12 @@ mod tests {
             vec![10, 20, 40, 60],
             "设置页四档必须是 10/20/40/60 秒（用户明确要求的档位）"
         );
-        // 默认 20s：老默认 60s 就是「按住说了半天没字」的元凶
+        // 默认 10s（2026-10-22 对齐用户机器）：老默认 60s 是「按住说了半天没字」的元凶，
+        // 20s 仍偏慢；10s 最跟手，整理调用次数略多但可接受
         let g = General::default();
-        assert_eq!(g.flush_seconds, 20);
-        assert_eq!(g.flush_gear(), Some(1));
-        assert_eq!(g.flush_label(), "每 20 秒");
+        assert_eq!(g.flush_seconds, 10);
+        assert_eq!(g.flush_gear(), Some(0));
+        assert_eq!(g.flush_label(), "每 10 秒");
     }
 
     #[test]

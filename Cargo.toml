@@ -1,6 +1,6 @@
 [package]
 name = "listen"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "按住热键说话 → 出字。本地/云端 ASR 可选的三端语音输入工具"

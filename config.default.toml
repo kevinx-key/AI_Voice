@@ -4,7 +4,7 @@
 [general]
 hotkey = "f9"              # 语法 [修饰+]*键：win / ctrl / alt / shift 可组合（如 win+h / ctrl+alt+f8）；字母键须带修饰键
 raw_hotkey = "shift+f9"    # 仅展示：取原文固定为「主键修饰 + Shift」，此字段不参与解析
-hotkey_mode = "hold"       # hold = 按住说话；toggle = 按一下开始、再按一下停止（长语音推荐）
+hotkey_mode = "toggle"     # hold = 按住说话；toggle = 按一下开始、再按一下停止（默认；长语音更现实）
 max_session_minutes = 30   # 单次会话上限（分钟）
 managed_tray = true        # 托管模式（输入法 fork 拉起）下仍显示自己的状态托盘图标：
                            # 圆点=就绪/灰、录音=红（同非托管模式）。若 fork 那边也开了托盘图标
@@ -17,8 +17,8 @@ segment_seconds = 3        # vad = 一段的**最长上限**（max_speech_durati
                            # energy = 分段目标长度（秒）。越小越实时；SenseVoice 建议 ≤30
 silence_seconds = 0.5      # vad = 尾部静音（min_silence_duration，说完多久上屏）；energy = 静音断句（0 = 关闭）
                            # 调小更跟手，但话中间一停顿就可能被切成两段
-drop_short_english = false # 丢弃"纯英文且很短"的结果（环境音常被误判为英文短词）；vibecoding 需要短英文，故默认关
-flush_seconds = 20         # 出字间隔（秒）：设置页 4 选 1 = 10 / 20 / 40 / 60；每满这么久就把已识别的文字整理后上屏一次
+drop_short_english = false # 丢掉「太短的英文段」（现场噪音过滤；默认关，避免误删正常英文）
+flush_seconds = 10         # 出字间隔（秒）：设置页 4 选 1 = 10 / 20 / 40 / 60（每满这么久整理上屏一次）
 min_speech_rms = 0.0015    # [能量门参数] 低于此 RMS 视为静音，不识别/不注入（越低越灵敏，噪声也越多）
 min_record_seconds = 0.2   # [能量门参数] 短于此长度的段直接丢弃（0.2 约可识别单音节）
 prewarm_capture = true     # 预热录音：引擎就绪即保持采集流常开（按下瞬间用 pre-roll 补回起头丢字；代价：麦克风指示灯常亮）
@@ -28,7 +28,7 @@ prewarm_idle_minutes = 0   # 预热空闲自动关麦（分钟）；**0 = 永不
                            # 需要省资源的人用设置页的 6 选 1 档位：只在按下时开麦 / 永不 / 3 / 5 / 10 / 30 分钟
                            # （界面档位只写这两个字段，手改这里也能用；非预设值界面会显示「自定义」）
 model_release_minutes = 10 # 空闲多久释放识别模型（0 = 永不）。实测省 ~2.9GB；下次按下 +1.8s，不丢字
-llm_idle_stop_minutes = 0 # 空闲多久停掉整理后端 llama-server（0 = 常驻；设 30 省 ~2.8GB，代价是空置后首次整理用原文）
+llm_idle_stop_minutes = 30 # 空闲多久停掉整理后端 llama-server（0 = 常驻；30 省 ~2.8GB，代价是空置后首次整理用原文）
                            # 释放 = 卸载 ASR 识别模型（省内存）+ 停掉本程序拉起的 llama-server（省显存）
                            # 代价：空闲后第一次按下要重载识别模型（实测 ~1.8s）；首次整理冷启动 10~25s（本次用原文）
                            # 档位与预热同一套：永不 / 3 / 5 / 10 / 30 分钟（与麦克风预热相互独立）
