@@ -100,7 +100,7 @@ last_deploy = ""           # 最近一次部署日志尾部（GUI 展示）
 enabled = true
 packs = ["vibecoding", "keyboard", "mine"]  # <exe 同级>\hotwords\<名>.tsv；mine = 我的热词（条数不限）
 asr_top_n = 30
-learn_max = 2000            # 我打过的词最多留多少条（按使用次数淘汰；太小会把刚学的词挤掉）             # 送 FunASR-Nano 热词 prompt 的条数上限（其 LLM 上下文有限）
+learn_max = 2000            # 我打过的词最多留多少条（按使用次数淘汰；太小会把刚学的词挤掉）
 dir = ""                   # 空 = exe 同级 hotwords\
 prefix_completion = false  # 前缀联想（默认关：打开后打 xiang 会冒出 相关~guan 一堆，很吵）
 quick_expand = true        # 英文/直通状态也用键盘钩子展开快捷输入（需部署生成 lua 心跳）
