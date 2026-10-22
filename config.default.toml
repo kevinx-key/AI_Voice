@@ -27,7 +27,8 @@ prewarm_idle_minutes = 0   # 预热空闲自动关麦（分钟）；**0 = 永不
                            # 用户体感就是“偶尔第一句少字”；省下的只是采集线程那点开销。
                            # 需要省资源的人用设置页的 6 选 1 档位：只在按下时开麦 / 永不 / 3 / 5 / 10 / 30 分钟
                            # （界面档位只写这两个字段，手改这里也能用；非预设值界面会显示「自定义」）
-model_release_minutes = 0  # 空闲多久后**释放模型**（分钟；**0 = 永不释放（默认）**，2026-10-09 起）
+model_release_minutes = 10 # 空闲多久释放识别模型（0 = 永不）。实测省 ~2.9GB；下次按下 +1.8s，不丢字
+llm_idle_stop_minutes = 0 # 空闲多久停掉整理后端 llama-server（0 = 常驻；设 30 省 ~2.8GB，代价是空置后首次整理用原文）
                            # 释放 = 卸载 ASR 识别模型（省内存）+ 停掉本程序拉起的 llama-server（省显存）
                            # 代价：空闲后第一次按下要重载识别模型（实测 ~1.8s）；首次整理冷启动 10~25s（本次用原文）
                            # 档位与预热同一套：永不 / 3 / 5 / 10 / 30 分钟（与麦克风预热相互独立）
@@ -98,7 +99,8 @@ last_deploy = ""           # 最近一次部署日志尾部（GUI 展示）
 [hotwords]                 # 热词包：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
 enabled = true
 packs = ["vibecoding", "keyboard", "mine"]  # <exe 同级>\hotwords\<名>.tsv；mine = 我的热词（条数不限）
-asr_top_n = 30             # 送 FunASR-Nano 热词 prompt 的条数上限（其 LLM 上下文有限）
+asr_top_n = 30
+learn_max = 2000            # 我打过的词最多留多少条（按使用次数淘汰；太小会把刚学的词挤掉）             # 送 FunASR-Nano 热词 prompt 的条数上限（其 LLM 上下文有限）
 dir = ""                   # 空 = exe 同级 hotwords\
 prefix_completion = false  # 前缀联想（默认关：打开后打 xiang 会冒出 相关~guan 一堆，很吵）
 quick_expand = true        # 英文/直通状态也用键盘钩子展开快捷输入（需部署生成 lua 心跳）
