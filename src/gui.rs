@@ -3281,10 +3281,20 @@ let hint = if *minutes == 0 {
             .show(ui, |ui| {
                 // 用 pump() 每 2s 刷新的缓存，避免每帧都去 stat 磁盘
                 let ready = self.last_model_ready;
-                let dir = self.paths.resolve(&self.cfg.asr.local_model);
+                // ⚠️ 目录要显示**当前后端实际用的那个**：以前固定显示 `asr.local_model`
+                // （sense-voice/paraformer），切到 FunASR-Nano 后仍显示 `…/paraformer-zh`，
+                // 用户以为"没切过去"（2026-10-23 反馈）。
+                let is_nano = crate::asr::is_funasr_nano(&self.cfg.asr.model_type);
+                let dir = crate::asr::funasr_dir(&self.cfg, &self.paths);
+                let dir = if is_nano {
+                    dir
+                } else {
+                    self.paths.resolve(&self.cfg.asr.local_model)
+                };
                 ui.label(format!(
-                    "状态：{}",
-                    if ready { "已就绪" } else { "缺失" }
+                    "状态：{} · 后端：{}",
+                    if ready { "已就绪" } else { "缺失" },
+                    if is_nano { "FunASR-Nano（支持热词偏置）" } else { "SenseVoice / Paraformer" }
                 ));
                 ui.weak(format!("目录：{}", dir.display()));
 
@@ -3293,7 +3303,9 @@ let hint = if *minutes == 0 {
                     (g.running, g.msg.clone(), g.done)
                 };
                 ui.horizontal(|ui| {
-                    if ui
+                    if is_nano {
+                        ui.weak("FunASR-Nano 的下载/配置用顶部「本地模型」那一条（约 4GB，含整理模型）");
+                    } else if ui
                         .add_enabled(!running && !ready, egui::Button::new("⬇ 下载本地模型（约 230MB）"))
                         .clicked()
                     {
@@ -3312,7 +3324,9 @@ let hint = if *minutes == 0 {
                         ui.colored_label(egui::Color32::from_rgb(220, 90, 90), &msg);
                     }
                 }
-                ui.weak("也可以手动把 model.int8.onnx 与 tokens.txt 放进该目录（U 盘拷贝）");
+                if !is_nano {
+                    ui.weak("也可以手动把 model.int8.onnx 与 tokens.txt 放进该目录（U 盘拷贝）");
+                }
             });
     }
 

@@ -14,7 +14,7 @@ pub trait AsrBackend: Send {
 }
 
 /// 本地模型类型是否为 FunASR-Nano
-fn is_funasr_nano(model_type: &str) -> bool {
+pub fn is_funasr_nano(model_type: &str) -> bool {
     let t = model_type.trim().replace('_', "-");
     t.eq_ignore_ascii_case("funasr-nano")
 }

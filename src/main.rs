@@ -372,6 +372,12 @@ fn main() -> Result<()> {
         return run_rime_uninstall(&paths, &cfg);
     }
     if cli.download_model {
+        if asr::is_funasr_nano(&cfg.asr.model_type) {
+            println!(
+                "当前后端是 FunASR-Nano，不走这个 230MB 的 SenseVoice 下载；请用 `--install-models`（识别 982MB + 整理 2.4GB）"
+            );
+            return Ok(());
+        }
         let dir = paths.resolve(&cfg.asr.local_model);
         let log = |m: String| println!("{m}");
         models::ensure_model(&dir, &log)?;
@@ -3329,7 +3335,12 @@ fn run_status(paths: &Paths, cfg: &Config, json: bool) -> Result<()> {
 
     // listen 不在运行：静态探测（拿不到钩子/麦克风/会话这些运行时信息）
     let model_ok = asr::local_model_ready(paths, cfg);
-    let model_dir = paths.resolve(&cfg.asr.local_model);
+    // 目录按**当前后端**显示（FunASR-Nano 与 sense-voice/paraformer 是两套目录）
+    let model_dir = if asr::is_funasr_nano(&cfg.asr.model_type) {
+        asr::funasr_dir(cfg, paths)
+    } else {
+        paths.resolve(&cfg.asr.local_model)
+    };
     if json {
         println!(
             "{}",
