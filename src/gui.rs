@@ -374,6 +374,8 @@ pub struct Gui {
     hw_confirm_restore: bool,
     /// 模型下载/自动配置进度（None = 没在装也没结果）
     install: Option<crate::install::Progress>,
+    /// 顶部进度条当前显示的是「下载中」还是「缺模型」（只用于去重打日志）
+    install_noticed: Option<bool>,
     /// 全链路快照（worker 每秒推 `Evt::Chain`；顶部链路状态卡与托盘 tooltip 共用）
     pub chain: crate::chain::Chain,
     /// 悬浮窗：批次文本
@@ -430,6 +432,7 @@ impl Gui {
         let rime_info = crate::rime::detect(&cfg.rime.user_dir);
         Self {
             install: None,
+            install_noticed: None,
             paths,
             cfg,
             cmd_tx,
@@ -937,6 +940,8 @@ impl Gui {
         egui::Panel::top("chain_card").show(ui, |ui| {
             ui.add_space(2.0);
             self.chain_card(ui);
+            // 下载/配置进度放在这里：始终可见，不用往下滑（2026-10-23）
+            self.install_strip(ui);
             ui.add_space(2.0);
         });
 
@@ -1451,6 +1456,72 @@ let hint = if *minutes == 0 {
                         ui.end_row();
                     });
             });
+    }
+
+    /// 顶部链路状态卡里的「本地模型」进度条（2026-10-23）
+    ///
+    /// 用户反馈：进度原来在下面「识别」分区里，不滑动根本看不见 → 挪到顶部，
+    /// 和 8 环灯放在一起（始终可见）。下面那个详细面板保留（有说明文字）。
+    fn install_strip(&mut self, ui: &mut egui::Ui) {
+        let plan = crate::install::plan_for(&self.cfg, &self.paths.root);
+        let missing = plan.needed();
+        let running = self
+            .install
+            .as_ref()
+            .map(|p| {
+                !matches!(
+                    p.phase,
+                    crate::install::Phase::Done
+                        | crate::install::Phase::Cancelled
+                        | crate::install::Phase::Failed
+                )
+            })
+            .unwrap_or(false);
+        if !running && !missing {
+            return;
+        }
+        if self.install_noticed != Some(running) {
+            self.install_noticed = Some(running);
+            tracing::info!(
+                "[模型] 顶部进度条已显示（{}）",
+                if running { "下载/配置中" } else { "缺模型，待下载" }
+            );
+        }
+        ui.add_space(2.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("本地模型");
+                if let Some(p) = self.install.clone() {
+                    ui.label(p.phase.label());
+                    if p.total > 0 {
+                        ui.add(
+                            egui::ProgressBar::new((p.done as f32 / p.total as f32).clamp(0.0, 1.0))
+                                .desired_width(200.0)
+                                .show_percentage(),
+                        );
+                        ui.weak(&p.msg);
+                    } else {
+                        ui.weak(&p.msg);
+                    }
+                } else {
+                    ui.weak("缺模型（约 4GB）");
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if running {
+                        if ui.small_button("✖ 取消并删除").clicked() {
+                            let _ = self.cmd_tx.send(Cmd::CancelInstall);
+                        }
+                    } else if ui.small_button("⬇ 下载并配置").clicked() {
+                        self.install = Some(crate::install::Progress {
+                            phase: crate::install::Phase::Preparing,
+                            msg: "准备下载…".into(),
+                            ..Default::default()
+                        });
+                        let _ = self.cmd_tx.send(Cmd::InstallModels);
+                    }
+                });
+            });
+        });
     }
 
     /// 模型下载 / 自动配置进度面板（2026-10-22）
