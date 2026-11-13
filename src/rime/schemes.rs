@@ -132,7 +132,7 @@ pub fn default_block(p: &Plan, zh_trad: bool) -> String {
     // 简繁默认态：开关在方案内（rime-ice 的 traditionalization），这里只给中文写
     if p.lang == Lang::Zh {
         s.push_str(&format!(
-            "  # 简繁由 rime-ice 的 traditionalization 开关控制，默认 {}（Ctrl+Shift+4 可切）\n",
+            "  # 简繁由 rime-ice 的 traditionalization 开关控制，默认 {}（改设置后重新部署；运行中已禁用快捷键）\n",
             if zh_trad { "繁" } else { "简" }
         ));
     }
@@ -164,11 +164,20 @@ pub const TERMS_DICT: &str = "listen_hotwords";
 /// 用户词学习钩子（lua processor 名）
 pub const LEARN_PROCESSOR: &str = "lua_processor@*listen_learn";
 
+/// 打字侧热词「即时生效」翻译器（lua translator 名）
+///
+/// 为什么不是只靠 custom_phrase：librime 把 user_dict 缓存在进程内（`db_pool_`），
+/// 写完 txt 不会重读 —— 加完快捷输入必须重启输入法才出候选（2026-11-05 定位）。
+/// lua 翻译器每次新输入按 `.ver` 版本戳重读，换输入框即生效。
+pub const PHRASES_TRANSLATOR: &str = "lua_translator@*listen_phrases";
+
 /// 生成 <schema>.custom.yaml 里我们管理的那一段
 /// - zh_trad：简繁默认态（索引由调用方按 schema 文件实际位置算好）
 /// - grammar：是否启用语法模型
 /// - terms：是否启用打字热词表（仅带 custom_phrase 翻译器的方案）
+/// - completion：打字联想（`custom_phrase/enable_completion` + lua 侧前缀联想）
 /// - learn_path：用户词学习日志的绝对路径（Some = 挂 lua 钩子）
+/// - phrases_path：热词表绝对路径（Some = 挂 lua 翻译器，改完不用部署）
 pub fn schema_block(
     switch_idx: Option<usize>,
     zh_trad: bool,
@@ -177,6 +186,7 @@ pub fn schema_block(
     // 打字联想：`custom_phrase/enable_completion`（打前缀也出热词候选）
     completion: bool,
     learn_path: Option<&str>,
+    phrases_path: Option<&str>,
 ) -> String {
     let mut s = String::new();
     if grammar {
@@ -193,6 +203,16 @@ pub fn schema_block(
         // 拉到 1e6，保证我们表里的词（快捷输入/学过的词）稳定排第一。
         s.push_str("  custom_phrase/initial_quality: 1000000\n");
     }
+    if let Some(p) = phrases_path {
+        // lua 翻译器：与 custom_phrase 读同一份表，但按版本戳重读（改完不用部署）
+        s.push_str("  engine/translators/+:\n");
+        s.push_str(&format!("    - {PHRASES_TRANSLATOR}\n"));
+        s.push_str(&format!("  listen_phrases/path: \"{p}\"\n"));
+        s.push_str(&format!(
+            "  listen_phrases/completion: {}\n",
+            if completion { "true" } else { "false" }
+        ));
+    }
     if let Some(p) = learn_path {
         // 追加一个旁路 processor：不处理按键，只把「编码 + 上屏文本」记到本地文件
         //
@@ -203,8 +223,11 @@ pub fn schema_block(
         s.push_str(&format!("  listen_learn/path: \"{p}\"\n"));
     }
     if let Some(i) = switch_idx {
+        // 整项替换（而不是只写 reset）：去掉 states 后，这个开关不会出现在 F4 方案选单里，
+        // 也就少了一条误触路径（2026-10-26：简繁是"模式"不是运行期开关）。
+        // `option_name` 仍存在，simplifier 照常按 reset 决定输出。
         s.push_str(&format!(
-            "  switches/@{i}/reset: {}\n",
+            "  switches/@{i}: {{ name: traditionalization, reset: {} }}\n",
             if zh_trad { 1 } else { 0 }
         ));
     }
@@ -280,22 +303,55 @@ mod tests {
     #[test]
     fn hotword_patch_line() {
         // 热词表 patch：把 custom_phrase 翻译器的词表指到我们生成的文件
-        let b = schema_block(None, false, false, true, false, None);
+        let b = schema_block(None, false, false, true, false, None, None);
         assert_eq!(
             b,
             "  custom_phrase/user_dict: listen_hotwords\n  custom_phrase/enable_completion: false\n  custom_phrase/initial_quality: 1000000\n"
         );
-        assert!(schema_block(None, false, false, false, false, None).is_empty());
+        assert!(schema_block(None, false, false, false, false, None, None).is_empty());
         // 与 grammar / 简繁共处时三者都在
-        let all = schema_block(Some(2), true, true, true, false, None);
+        let all = schema_block(Some(2), true, true, true, false, None, None);
         assert!(all.contains("grammar:"));
         assert!(all.contains("custom_phrase/user_dict: listen_hotwords"));
-        assert!(all.contains("switches/@2/reset: 1"));
+        // 简繁是"整项替换"：保留 name/reset，去掉 states（否则 F4 选单里还能误切）
+        assert!(
+            all.contains("switches/@2: { name: traditionalization, reset: 1 }"),
+            "实际:\n{all}"
+        );
+        assert!(!all.contains("switches/@2/reset"), "旧写法必须消失:\n{all}");
+    }
+
+    #[test]
+    fn phrases_translator_patch() {
+        // 2026-11-05：除了 custom_phrase 表，还要挂 lua 翻译器（改完词表不用部署就生效）
+        let b = schema_block(
+            None,
+            false,
+            false,
+            true,
+            true,
+            None,
+            Some("C:/Users/u/AppData/Roaming/Rime/listen_hotwords.txt"),
+        );
+        assert!(
+            b.contains("  engine/translators/+:\n    - lua_translator@*listen_phrases\n"),
+            "实际:\n{b}"
+        );
+        assert!(b.contains(
+            "  listen_phrases/path: \"C:/Users/u/AppData/Roaming/Rime/listen_hotwords.txt\""
+        ));
+        // 前缀联想开关要传给 lua（custom_phrase 与 lua 同源）
+        assert!(b.contains("  custom_phrase/enable_completion: true"), "{b}");
+        assert!(b.contains("  listen_phrases/completion: true"), "{b}");
+        // 没给路径时不挂 translators（避免把 lua 装了一半的方案推到用户机器）
+        let none = schema_block(None, false, false, true, false, None, None);
+        assert!(!none.contains("engine/translators"), "{none}");
+        assert!(!none.contains("listen_phrases"), "{none}");
     }
 
     #[test]
     fn learn_hook_patch_line() {
-        let b = schema_block(None, false, false, false, false, Some("C:/a/b/learn_log.tsv"));
+        let b = schema_block(None, false, false, false, false, Some("C:/a/b/learn_log.tsv"), None);
         // `/+` 后面必须跟列表项（写标量会让 librime 拒绝整段 patch，进而方案编译失败）
         assert!(
             b.contains("  engine/processors/+:\n    - lua_processor@*listen_learn\n"),
@@ -303,17 +359,17 @@ mod tests {
         );
         assert!(b.contains("listen_learn/path: \"C:/a/b/learn_log.tsv\""));
         // 不挂钩子时不能出现 processors 行（否则会重复追加）
-        assert!(!schema_block(None, false, false, true, false, None).contains("processors"));
+        assert!(!schema_block(None, false, false, true, false, None, None).contains("processors"));
     }
     #[test]
     fn completion_patch_is_explicit() {
         // 打开：写 true；关闭：也要显式写 false（否则上一次部署的 true 会残留）
-        let on = schema_block(None, false, false, true, true, None);
+        let on = schema_block(None, false, false, true, true, None, None);
         assert!(on.contains("custom_phrase/enable_completion: true"), "{on}");
-        let off = schema_block(None, false, false, true, false, None);
+        let off = schema_block(None, false, false, true, false, None, None);
         assert!(off.contains("custom_phrase/enable_completion: false"), "{off}");
         // 不带热词表时不碰这个键
-        let none = schema_block(None, false, false, false, true, None);
+        let none = schema_block(None, false, false, false, true, None, None);
         assert!(!none.contains("enable_completion"), "{none}");
     }
 }

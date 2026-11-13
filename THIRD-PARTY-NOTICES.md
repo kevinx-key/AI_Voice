@@ -12,6 +12,14 @@
 | [Rime / Weasel](https://github.com/rime/weasel)（含本项目 fork：<https://github.com/kevinx-key/K3R-voice>） | 键盘输入法引擎（**不在本仓库，安装包内单独分发**） | GPL-3.0 | 本仓库只调用其安装器/部署接口，**不静态链接**；若再分发安装包，需同时提供对应 GPL 源码（即上面的 fork 仓库） |
 | [rime-ice](https://github.com/iDvel/rime-ice) 等方案包、万象语法模型 | 输入法方案与语言模型（**不在本仓库，安装包内单独分发**） | 各自上游许可（GPL-3.0 等） | 同上，安装包再分发时遵循上游许可 |
 | Qwen / SenseVoice / Paraformer / FunASR-Nano 模型权重 | 本地 LLM 与 ASR 模型（**不在本仓库**，首次运行下载） | 各模型上游许可 | 本仓库只提供下载/加载逻辑 |
+| [Noto Sans SC](https://fonts.google.com/noto) / [思源黑体 Source Han Sans](https://github.com/adobe-fonts/source-han-sans) 等中文字体 | 设置界面中文显示 | SIL OFL 1.1 | **不随本仓库/安装包强制分发**：运行时按「`<exe>\resources\fonts\` → 系统开源字体」顺序查找。若把字体放进安装包，必须同时带该字体的 OFL 许可文本 |
+
+## 明确不使用（商业字体）
+
+设置界面**不再**加载以下系统字体（2026-11-05 移除）：等线 `Deng.ttf`、微软雅黑 `msyh.ttc`、
+黑体 `simhei.ttf`、宋体 `simsun.ttc`。它们随 Windows 授权，不可随本程序分发。
+如果 `resources\fonts\` 与系统都找不到开源中文字体，界面会保留 egui 自带字体（Ubuntu-Light / Hack，开源）
+并在日志里 WARN，而不是回退到商业字体。
 
 ## 本仓库不包含
 

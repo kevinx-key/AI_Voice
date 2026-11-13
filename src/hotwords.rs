@@ -128,7 +128,13 @@ pub fn parse_tsv(text: &str) -> Vec<Term> {
 }
 
 /// 把词条写回 tsv（写死表头，注释块统一由我们维护）
+///
+/// 每个字段都做「制表符/换行 → 空格」的清洗：词条是用户随手粘的（可能带 Tab/换行），
+/// 一个裸 Tab 会把列错位，最后写进 Rime 候选表时整行都是坏的（2026-11-05）。
 pub fn render_tsv(name: &str, terms: &[Term]) -> String {
+    let clean = |s: &str| -> String {
+        s.replace(['\t', '\r', '\n'], " ").trim().to_string()
+    };
     let mut s = match name {
         KEYBOARD => "# 倾听输入法 · 热词包：键圈（机械键盘社区）\n".to_string(),
         PHRASES => PHRASES_TEMPLATE.to_string(),
@@ -147,7 +153,11 @@ pub fn render_tsv(name: &str, terms: &[Term]) -> String {
     for t in terms {
         s.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\n",
-            t.text, t.code, t.category, t.weight, t.note
+            clean(&t.text),
+            clean(&t.code).to_lowercase(),
+            clean(&t.category),
+            t.weight,
+            clean(&t.note)
         ));
     }
     s
@@ -156,7 +166,7 @@ pub fn render_tsv(name: &str, terms: &[Term]) -> String {
 /// 热词目录（空配置 = exe 同级 `hotwords\`）
 pub fn dir(cfg: &Config, paths: &Paths) -> PathBuf {
     if cfg.hotwords.dir.trim().is_empty() {
-        paths.root.join("hotwords")
+        paths.hotwords_dir()
     } else {
         paths.resolve(&cfg.hotwords.dir)
     }
@@ -340,9 +350,16 @@ pub fn asr_terms(cfg: &Config, paths: &Paths) -> Vec<String> {
 
 /// 立即把词表写进 Rime 用户目录（**不需要重新部署**）
 ///
-/// 实测（2026-10-09，weasel 0.17.4 / librime 1.13）：`listen_hotwords.txt` 是**每个输入会话开始时**
-/// 重读的纯文本表（日志 `tsv.cc: reading tsv file`），所以改完内容只要换个窗口/输入框（新会话）
-/// 就生效；只有**结构变更**（patch / lua 钩子 / 方案列表 / 主力语言）才必须重新部署。
+/// ⚠️ 2026-11-05 更正：这里原来写的是「`listen_hotwords.txt` 是每个输入会话开始时重读的纯文本表，
+/// 所以换窗口即生效」。实测**不成立**：librime 把 user_dict 缓存在进程内的
+/// `UserDictionaryComponent::db_pool_`（`src/rime/dict/user_dictionary.cc`），
+/// WeaselServer 启动后只读过一次 tsv（`%TEMP%\rime.weasel\*.log` 里只有一行 `reading tsv file`），
+/// 之后再写文件不会重读 —— 这就是「快捷输入加了却打不出来」的根因。
+///
+/// 现在有两条通道同时工作：
+///   1. 这张表（custom_phrase）—— 重新部署 / 重启输入法后生效，兜底；
+///   2. `lua\listen_phrases.lua`（lua_translator）—— 每次查询按 `.ver` 版本戳重读本表，
+///      所以**换一个输入框（新会话）就出候选**，不用部署。
 ///
 /// 返回 Ok(None) = 倾听输入法未装或用户目录不在（比如只想调 config 的机器）。
 pub fn apply_to_rime(cfg: &Config, paths: &Paths) -> Result<Option<String>> {
@@ -391,7 +408,11 @@ pub fn rime_table(terms: &[Term]) -> String {
     s
 }
 
-/// 写 Rime 短语表（顺带登记到卸载清单）
+/// 写 Rime 短语表（顺带更新版本戳 + 登记到卸载清单）
+///
+/// 版本戳 `<用户目录>\listen_hotwords.ver`：几字节的 `长度 毫秒时间戳`。
+/// `lua\listen_phrases.lua` 每次新输入只读它（很便宜），变了才重读整张表 ——
+/// 这是「改完不用部署就生效」的关键（原因见 `apply_to_rime` 的注释）。
 pub fn write_rime_table(cfg: &Config, paths: &Paths, user_dir: &Path) -> Result<Option<String>> {
     let terms = load(cfg, paths);
     let n = terms.iter().filter(|t| !t.code.trim().is_empty()).count();
@@ -402,13 +423,53 @@ pub fn write_rime_table(cfg: &Config, paths: &Paths, user_dir: &Path) -> Result<
             let _ = std::fs::remove_file(&p);
             crate::rime::unregister_file(user_dir, crate::rime::TERMS_FILE);
         }
+        let v = user_dir.join(crate::rime::TERMS_VER_FILE);
+        if v.is_file() {
+            let _ = std::fs::remove_file(&v);
+            crate::rime::unregister_file(user_dir, crate::rime::TERMS_VER_FILE);
+        }
         return Ok(None);
     }
     let body = rime_table(&terms);
     let p = user_dir.join(crate::rime::TERMS_FILE);
-    std::fs::write(&p, body).with_context(|| format!("写热词表失败: {}", p.display()))?;
+    // 原子写（临时文件 + rename）：GUI 自动保存与 worker 都会写这张表，
+    // 直接 write 可能被对方读到半截（2026-11-05 审查）。
+    write_atomic(&p, body.as_bytes())?;
     crate::rime::register_file(user_dir, crate::rime::TERMS_FILE)?;
+    // 版本戳：长度 + 毫秒时间戳（同时变两样，几乎不会撞车）
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let vp = user_dir.join(crate::rime::TERMS_VER_FILE);
+    let stamp = format!("{} {}", body.len(), millis);
+    match write_atomic(&vp, stamp.as_bytes()) {
+        Ok(()) => {
+            let _ = crate::rime::register_file(user_dir, crate::rime::TERMS_VER_FILE);
+        }
+        Err(e) => {
+            // 版本戳写不进去时，**必须删掉旧的**：lua 只在读不到 .ver 时才退回「按长度判断」。
+            // 留着旧文件（内容没变）= lua 认为没更新 → 永远不重读新表（2026-11-05 审查）。
+            let _ = std::fs::remove_file(&vp);
+            tracing::warn!("写热词表版本戳失败（已删旧戳，lua 退化为按长度判断）: {e}");
+        }
+    }
     Ok(Some(format!("  打字热词表 {n} 条 → {}", p.display())))
+}
+
+/// 原子写：先写 `<path>.tmp` 再 rename 覆盖（Windows 下 rename 会替换已存在的目标）
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, bytes)
+        .with_context(|| format!("写临时文件失败: {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| {
+        // rename 失败时清理临时文件，别留垃圾
+        let _ = std::fs::remove_file(&tmp);
+        format!("替换失败: {}", path.display())
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -501,10 +562,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("listen_hw_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let paths = Paths {
-            root: dir.clone(),
-            config_file: dir.join("config.toml"),
-        };
+        let paths = Paths::for_test(dir.clone());
         let user_dir = dir.join("rime");
         std::fs::create_dir_all(&user_dir).unwrap();
         let mut cfg = Config::default();
@@ -533,10 +591,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("listen_hw_gl_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let paths = Paths {
-            root: dir.clone(),
-            config_file: dir.join("config.toml"),
-        };
+        let paths = Paths::for_test(dir.clone());
         let mut cfg = Config::default();
         cfg.glossary.terms = vec!["我的术语".into()];
         let terms = asr_terms(&cfg, &paths);

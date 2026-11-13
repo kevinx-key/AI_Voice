@@ -59,6 +59,12 @@ Name: "autostart"; Description: "开机自启（随系统启动）"; GroupDescri
 ; 本安装器以 x64 模式运行，写入的是 64 位视图（64 位进程才读得到）。
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\listen.exe"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe}"; Flags: uninsdeletekey
 
+[Dirs]
+; 关键：程序把 config.toml / logs / hotwords / models / voice_off.flag 都放在 {app} 下，
+; 而 {app} 默认继承 Program Files 的 ACL（Users 只有 RX）→ 非提权启动写不进去，
+; 旧版会在初始化日志时 panic（见 项目调试过程.md §56）。必须显式授予写权限。
+Name: "{app}"; Permissions: users-modify
+
 [Files]
 Source: "..\target\release\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -70,6 +76,10 @@ Source: "..\resources\models\silero_vad.onnx"; DestDir: "{app}\models"; Flags: i
 Source: "..\resources\rime\weasel-0.17.4.0-installer.exe"; DestDir: "{app}\resources\rime"; Flags: ignoreversion
 ; 三套方案包（雾凇拼音 / easy_en / 日文）
 Source: "..\resources\rime\schemes\*"; DestDir: "{app}\resources\rime\schemes"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 开源中文字体（可选）：设置界面只用开源字体，优先加载这里；没有就退回系统里的
+; Noto Sans SC / 思源黑体等，绝不加载微软雅黑/等线/黑体/宋体（商业字体）。
+; skipifsourcedoesntexist = 不放字体也能打包。
+Source: "..\resources\fonts\*"; DestDir: "{app}\resources\fonts"; Flags: ignoreversion skipifsourcedoesntexist
 ; 万象语法模型（约 400MB；用 build.ps1 -NoLM 编译可排除）
 #if IncludeLM
 Source: "..\resources\rime\lm\*"; DestDir: "{app}\resources\rime\lm"; Flags: ignoreversion
@@ -132,5 +142,34 @@ begin
         Exec(RemoveQuotes(WeaselUninst), '/S', '', SW_SHOW, ewWaitUntilTerminated, Res);
       end;
     end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  VoiceOn: Boolean;
+  FlagPath, CfgPath: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    // 出厂默认 voice_enabled=false：先放 OFF 标志，打断「fork 等 listen 写标志、listen 等 fork 拉起」
+    // 的鸡生蛋（见 项目调试过程.md §56）。升级用户若显式开着语音，则不写。
+    FlagPath := ExpandConstant('{app}\voice_off.flag');
+    CfgPath := ExpandConstant('{app}\config.toml');
+    if FileExists(FlagPath) then
+      Exit;
+    VoiceOn := False;
+    if FileExists(CfgPath) then
+    begin
+      if LoadStringsFromFile(CfgPath, Lines) then
+        for I := 0 to GetArrayLength(Lines) - 1 do
+          if (Pos('voice_enabled', Lines[I]) > 0) and (Pos('true', Lines[I]) > 0) then
+            VoiceOn := True;
+    end;
+    if VoiceOn then
+      Exit;
+    SaveStringToFile(FlagPath, 'voice disabled' + #13#10, False);
   end;
 end;

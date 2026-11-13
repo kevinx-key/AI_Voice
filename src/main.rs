@@ -11,6 +11,7 @@ mod bench;
 mod chain;
 mod config;
 mod ctl;
+mod diag;
 mod gui;
 mod hotkey;
 mod hotwords;
@@ -154,6 +155,9 @@ struct Cli {
     /// 所以它能当回归用：`listen.exe --correct "美国客户"` 必须原样返回。
     #[arg(long, value_name = "TEXT")]
     correct: Option<String>,
+    /// 导出诊断包（启动阶段日志/崩溃现场/最近日志/脱敏配置）到 `%LOCALAPPDATA%\Listen\support-*` 后退出
+    #[arg(long)]
+    support: bool,
     /// 【内部】崩溃自启用：拿不到单实例锁时最多等这么多毫秒（等旧进程退出后接手）
     ///
     /// 平时是 0（已有实例就立刻退出，保持原语义）。只有 `install_crash_guard` 拉起的
@@ -238,6 +242,86 @@ enum Evt {
 /// 会跟 ASR/大模型抢 CPU。所以 WARP 只在 `gui_render = "software"` 时启用。
 ///
 /// 另外不等垂直同步（`AutoNoVsync`）：Fifo 在隐藏/被遮挡窗口上会让 Present 等合成器。
+/// 主显示器工作区（逻辑点 = 物理像素 ÷ DPI 缩放）。
+///
+/// 小分辨率/高缩放的笔电上，设置窗初始尺寸一旦超过屏幕，窗口底部会被裁掉
+/// （按钮点不到、内容看不到）。这个函数给 `gui_default_size` 提供真实可用尺寸。
+#[cfg(windows)]
+fn primary_work_area_points() -> Option<(f32, f32)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::HiDpi::GetDpiForSystem;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    unsafe {
+        let mut r = RECT::default();
+        let ok = SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(&mut r as *mut _ as *mut core::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok();
+        if !ok {
+            return None;
+        }
+        let pw = (r.right - r.left) as f32;
+        let ph = (r.bottom - r.top) as f32;
+        if pw < 320.0 || ph < 240.0 {
+            return None;
+        }
+        let dpi = GetDpiForSystem();
+        let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
+        Some((pw / scale, ph / scale))
+    }
+}
+
+#[cfg(not(windows))]
+fn primary_work_area_points() -> Option<(f32, f32)> {
+    None
+}
+
+/// 工作区文本（只给日志，方便排查"为什么窗口这么小"）
+fn gui_work_area_text() -> String {
+    match primary_work_area_points() {
+        Some((w, h)) => format!("{w:.0}×{h:.0} 逻辑点"),
+        None => "未知（用 1280×720 兜底）".into(),
+    }
+}
+
+/// 设置窗初始尺寸：工作区的 92%，夹在 [760×520, 1040×780] 之间，且**绝不超出工作区**。
+///
+/// 逻辑点单位与 eframe 的 `with_inner_size` 一致（eframe 会再乘 DPI 缩放）。
+fn gui_default_size() -> (f32, f32) {
+    fit_window(primary_work_area_points().unwrap_or((1280.0, 720.0)))
+}
+
+/// `gui_default_size` 的纯计算部分（可单测）：输入工作区逻辑点，输出窗口初始尺寸。
+///
+/// 为什么必须有这个夹取（2026-11-05 实测）：本机 1920×1080 @200% → 工作区只有 **960×520 逻辑点**，
+/// 旧代码写死 1040×780 → 比屏幕高 260 点，窗口底部（底部按钮条、分组卡下半截）**完全在屏幕外**，
+/// 用户看到的就是「小分辨率下部分区域完全无法显示」。
+fn fit_window(work: (f32, f32)) -> (f32, f32) {
+    let (aw, ah) = work;
+    // 留 16 点给窗口边框/任务栏阴影，不能被 clamp 到比工作区还大
+    let hard_w = (aw - 16.0).max(400.0);
+    let hard_h = (ah - 16.0).max(320.0);
+    let w = (aw * 0.92).clamp(760.0, 1040.0).min(hard_w);
+    let h = (ah * 0.92).clamp(520.0, 780.0).min(hard_h);
+    (w, h)
+}
+
+/// 最小尺寸：初始尺寸的 78%（保证 ≤ 初始尺寸，否则 Windows 会把窗口撑回最小值）
+///
+/// 末尾的 `.min(w/h)` 是硬保证：极小屏（640×360 工作区）上 78% 会小于 360 这个下限，
+/// 不夹的话「最小值」会反过来大于初始尺寸，窗口反而被撑大。
+fn gui_min_size(w: f32, h: f32) -> (f32, f32) {
+    (
+        (w * 0.78).clamp(480.0, 720.0).min(w),
+        (h * 0.78).clamp(360.0, 560.0).min(h),
+    )
+}
+
 fn gui_wgpu_options(cfg: &Config) -> eframe::WgpuConfiguration {
     use eframe::egui_wgpu::{WgpuSetup, WgpuSetupCreateNew};
     use eframe::wgpu;
@@ -298,22 +382,103 @@ fn main() -> Result<()> {
     attach_parent_console();
 
     let cli = Cli::parse();
+    diag::phase("boot");
     let paths = match &cli.config {
         Some(p) => Paths::from_config_file(p)?,
         None => Paths::default_from_exe()?,
     };
+    diag::phase_note(
+        "paths",
+        &format!(
+            "root={} data_root={} writable={}",
+            paths.root.display(),
+            paths.data_root.display(),
+            paths.writable
+        ),
+    );
+    if !paths.writable {
+        // 安装目录只读：数据目录已回退。GUI 顶部还会再显示红条；这里先留痕。
+        tracing::warn!(
+            "安装目录不可写（{}）→ 配置/日志/热词/模型改用 {}",
+            paths.root.display(),
+            paths.data_root.display()
+        );
+    }
     let cfg = Config::load_or_create(&paths)?;
+    diag::phase("config");
 
     init_logging(&paths, &cfg.general.log_level, cli.once.is_some() || cli.selftest.is_some() || cli.bench.is_some());
     tracing::info!(
-        "倾听输入法 v{} 启动（root={}）",
+        "倾听输入法 v{} 启动（root={} data={}）",
         env!("CARGO_PKG_VERSION"),
-        paths.root.display()
+        paths.root.display(),
+        paths.data_root.display()
     );
 
     // ---- 无界面的一次性命令 ----
+    if cli.support {
+        match diag::collect_support(&paths.root, &paths.config_file, &paths.data_root) {
+            Ok(d) => println!("诊断包已导出: {}", d.display()),
+            Err(e) => println!("诊断包导出失败: {e}"),
+        }
+        return Ok(());
+    }
     if cli.rime_deploy {
         return run_rime_deploy(&paths, &cfg, cli.rime_install);
+    }
+
+    // 唤起事件尽早创建：之后其他进程（托盘/语言栏跑 `listen.exe --settings`）才能请求
+    // 把设置窗口显示到前台。放在热词同步之前，缩小"已有实例但事件还没建好"的窗口期。
+    let show_event = create_show_event();
+    diag::phase("show_event");
+
+    // 互斥体等待时长：普通启动 0（已有实例就退出）；`--settings` 且旧实例答应让位时等它退出。
+    let mut lock_wait = Duration::from_millis(cli.retry_lock);
+
+    // `--settings`：已有实例时先问它"窗口开没开"——
+    // - 没开：让它唤起（OK），本进程退出；
+    // - 已开：让它退出（RESTART），本进程等锁后**重开一个新窗口**（不叠加、旧窗卡死也能关）；
+    // - 录音中（ERR busy）：不让它死，退回"唤起"；
+    // - 无响应（ctl 也卡死）：校验进程名后强杀，再接手。
+    // 这样点"设置"永远是"一个窗口"，且旧窗口例程卡死时也能恢复。
+    if cli.settings && instance_running() {
+        diag::phase("settings_open_request");
+        match ctl_send("OPEN_SETTINGS", Duration::from_millis(900)) {
+            Some(r) if r == "OK" => {
+                diag::phase("settings_shown_by_old");
+                return Ok(());
+            }
+            Some(r) if r == "RESTART" => {
+                diag::phase("settings_restart_wait");
+                lock_wait = Duration::from_secs(8);
+            }
+            Some(r) if r.starts_with("ERR") => {
+                tracing::warn!("旧实例拒绝重开（{r}），退回唤起");
+                signal_show_settings();
+                return Ok(());
+            }
+            other => {
+                if !instance_running() {
+                    // 旧实例刚好在这几毫秒里自己退了：直接接手，不用杀
+                    diag::phase("settings_old_gone");
+                    lock_wait = Duration::from_secs(8);
+                } else {
+                    tracing::warn!(
+                        "旧实例对 OPEN_SETTINGS 无响应（{other:?}），尝试强制结束后重开"
+                    );
+                    match ctl_server_pid() {
+                        Some(pid) if terminate_listen(pid) => {
+                            diag::phase_note("settings_kill_old", &format!("pid={pid}"));
+                            lock_wait = Duration::from_secs(8);
+                        }
+                        _ => {
+                            signal_show_settings();
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
     }
     // 热词包：首次运行把内置包铺到 exe 同级 hotwords\（GUI 与 ASR 都读它；已存在不动）
     for l in hotwords::ensure_user_packs(&cfg, &paths) {
@@ -385,7 +550,7 @@ fn main() -> Result<()> {
     }
     // 调试/回归用：前台跑一遍「下载 + 配置模型」，进度直接打到 stdout
     if cli.install_models {
-        let plan = install::plan_for(&cfg, &paths.root);
+        let plan = install::plan_for(&cfg, &paths.data_root);
         println!("模型目录: {}", plan.root.display());
         println!("识别模型: {}（已就绪={}）", plan.asr_url, plan.asr_ready());
         println!(
@@ -430,10 +595,6 @@ fn main() -> Result<()> {
     }
 
     // ---- 常驻模式 ----
-    // 唤起事件：先建好命名事件，之后其他进程（例如倾听输入法托盘菜单跑
-    // `listen.exe --settings`）可以通过它请求把设置窗口显示到前台。
-    let show_event = create_show_event();
-
     // 崩溃自愈（2026-10-20）：见 `install_crash_guard` 的注释。
     // 只装在常驻模式：`--status` / `--selftest` 这类一次性命令 panic 不该顺带拉起常驻进程。
     install_crash_guard(&paths, cli.config.clone(), cli.managed);
@@ -441,9 +602,11 @@ fn main() -> Result<()> {
     // 上一次是不是崩过？→ 告诉用户（悬浮窗 + 日志页），然后把这现场留档改名
     let crash_note = take_crash_note(&paths);
 
-    let _guard = match acquire_single_instance(Duration::from_millis(cli.retry_lock)) {
+    diag::phase("instance");
+    let _guard = match acquire_single_instance(lock_wait) {
         Ok(Some(h)) => Some(h),
         Ok(None) => {
+            diag::phase("instance_busy");
             // 已有实例在跑：只有「显式设置请求」才把设置窗叫到前台；
             // 普通无参启动（自启/双击快捷方式/误触）一律静默退出，不再乱弹设置页。
             if cli.settings {
@@ -464,6 +627,7 @@ fn main() -> Result<()> {
             None
         }
     };
+    diag::phase("instance_ok");
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
     let (evt_tx, evt_rx) = mpsc::channel::<Evt>();
@@ -658,16 +822,25 @@ fn main() -> Result<()> {
     // 只有显式请求（--settings / --first-run）才在启动时显示设置窗；
     // 无参/--managed 启动一律静默后台（修「设置页莫名自动弹出」）。
     let show_on_start = cli.settings || cli.first_run;
+    // 2026-11-05：设置窗尺寸按**主屏工作区**算，别写死 1040×780 —— 小屏/高缩放
+    // （1366×768 @125%、1080p @150%）上写死的初始尺寸会超出屏幕，底部按钮直接看不见。
+    let (ok_w, ok_h) = gui_default_size();
+    let (min_w, min_h) = gui_min_size(ok_w, ok_h);
+    tracing::info!(
+        "设置窗尺寸: {ok_w:.0}×{ok_h:.0}（最小 {min_w:.0}×{min_h:.0}）；屏幕工作区 {}",
+        gui_work_area_text()
+    );
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([640.0, 760.0])
-        .with_min_inner_size([540.0, 480.0])
+        .with_inner_size([ok_w, ok_h])
+        .with_min_inner_size([min_w, min_h])
         .with_title("倾听输入法 设置");
     if !show_on_start {
         viewport = viewport.with_visible(false);
     }
-    // 渲染后端：`gui_render = "glow"` 走 OpenGL，其余走 wgpu（Vulkan/DX12）
-    let mode = cfg.general.gui_render.trim().to_ascii_lowercase();
-    let want_glow = matches!(mode.as_str(), "glow" | "ogl" | "opengl");
+    // 渲染后端：用户设置 + "上次首帧超时"自动换一个（见 pick_gui_renderer）
+    let renderer = pick_gui_renderer(&cfg);
+    diag::phase_note("renderer", &renderer);
+    let want_glow = renderer == "glow";
     let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -677,7 +850,9 @@ fn main() -> Result<()> {
         tracing::info!("GUI 渲染后端: glow（OpenGL）");
     } else {
         options.wgpu_options = gui_wgpu_options(&cfg);
+        tracing::info!("GUI 渲染后端: wgpu");
     }
+    spawn_gui_watchdog(&renderer);
     let cfg_for_fallback = cfg.clone();
     let paths_for_fallback = paths.clone();
     let run_res = eframe::run_native(
@@ -693,7 +868,11 @@ fn main() -> Result<()> {
                 cli.first_run,
                 cli.settings,
                 show_event,
+                cli.managed,
             );
+            // 托管实例默认不建托盘：只在录音时出现（2026-10-26「小圆点」需求）。
+            // 独立实例（用户自己打开）保持原有托盘。
+            g.tray_allowed = !no_tray;
             if no_tray {
                 g.tray = None;
             }
@@ -704,17 +883,20 @@ fn main() -> Result<()> {
         Ok(()) => {}
         Err(e) if want_glow => {
             // 这台机器建不出 OpenGL 上下文（缺驱动/远程桌面等）：自动改回 auto 再退出，
-            // 用户下次启动就是 wgpu，不用手改配置。
-            tracing::error!("glow 渲染后端启动失败: {e:#} → gui_render 改回 auto，请重新启动");
+            // 用户下次启动就是 wgpu，不用手改配置。写配置失败也不影响下次选择（看门狗会兜底）。
+            tracing::error!("glow 渲染后端启动失败: {e:#} → 本次改回 auto，请重新启动");
             let mut c = Config::load_or_create(&paths_for_fallback).unwrap_or(cfg_for_fallback);
             c.general.gui_render = "auto".into();
-            let _ = c.save(&paths_for_fallback);
+            if let Err(e) = c.save(&paths_for_fallback) {
+                tracing::warn!("保存 gui_render=auto 失败（{}）: {e:#}", paths_for_fallback.config_file.display());
+            }
             std::process::exit(2);
         }
         Err(e) => return Err(anyhow::anyhow!("GUI 启动失败: {e}")),
     }
     // 走到这里 = GUI 事件循环正常结束（托盘「退出程序」/窗口关闭流程），
     // 留一行收尾日志：以后日志里「突然断掉」和「正常退出」能一眼分开（2026-10-20）
+    diag::phase("gui_exit");
     tracing::info!("GUI 事件循环已结束 → 进程正常退出");
     Ok(())
 }
@@ -1305,7 +1487,7 @@ impl Worker {
 
     /// 模型安装的计划（URL/开关/目录都来自配置）
     fn install_plan(&self) -> install::Plan {
-        install::plan_for(&self.cfg, &self.paths.root)
+        install::plan_for(&self.cfg, &self.paths.data_root)
     }
 
     /// 开始「下载 + 配置模型」（在独立线程跑：关掉设置页也不打断）
@@ -2719,22 +2901,33 @@ impl Worker {
     }
 }
 
-/// 总开关标志文件路径：listen.exe 同级（fork 侧 spawn 前检查）
-fn voice_flag_path(paths: &Paths) -> PathBuf {
-    paths.root.join("voice_off.flag")
-}
-
 /// 同步 `voice_off.flag`：OFF 写、ON 删（fork 据此跳过托管拉起）
+///
+/// 写两份：exe 同级是 fork 的判据；数据目录是 root 只读时的诊断副本。
+/// 两份路径相同时只写一次。
 fn sync_voice_flag(paths: &Paths, enabled: bool) {
-    let p = voice_flag_path(paths);
-    if enabled {
-        if p.exists() {
-            if let Err(e) = std::fs::remove_file(&p) {
-                tracing::warn!("删除 voice_off.flag 失败: {e}");
+    let mut targets = vec![paths.flag_path()];
+    if paths.data_flag_path() != paths.flag_path() {
+        targets.push(paths.data_flag_path());
+    }
+    for p in targets {
+        if enabled {
+            if p.exists() {
+                if let Err(e) = std::fs::remove_file(&p) {
+                    tracing::warn!("删除 voice_off.flag 失败（{}）: {e}", p.display());
+                }
+            }
+        } else {
+            if let Some(dir) = p.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&p, b"voice disabled\n") {
+                tracing::warn!(
+                    "写 {} 失败（fork 可能仍会拉起）: {e}；若安装目录只读，请重装到可写目录或授予写权限",
+                    p.display()
+                );
             }
         }
-    } else if let Err(e) = std::fs::write(&p, b"voice disabled\n") {
-        tracing::warn!("写 voice_off.flag 失败（fork 可能仍会拉起）: {e}");
     }
 }
 
@@ -3330,6 +3523,12 @@ fn run_status(paths: &Paths, cfg: &Config, json: bool) -> Result<()> {
                 snapshot.report()
             }
         );
+        if !json {
+            println!();
+            println!("  安装目录：{}（可写={}）", paths.root.display(), paths.writable);
+            println!("  数据目录：{}", paths.data_root.display());
+            println!("  日志目录：{}", paths.logs_dir().display());
+        }
         return Ok(());
     }
 
@@ -3355,6 +3554,9 @@ fn run_status(paths: &Paths, cfg: &Config, json: bool) -> Result<()> {
                 "asr_model_ready": model_ok,
                 "polish": cfg.polish.tier(),
                 "logs_dir": paths.logs_dir().display().to_string(),
+                "install_dir": paths.root.display().to_string(),
+                "data_dir": paths.data_root.display().to_string(),
+                "install_writable": paths.writable,
             })
         );
         return Ok(());
@@ -3379,8 +3581,42 @@ fn run_status(paths: &Paths, cfg: &Config, json: bool) -> Result<()> {
         model_dir.display()
     );
     println!("  · 整理：{}", cfg.polish.tier());
+    println!("  · 安装目录：{}（可写={}）", paths.root.display(), paths.writable);
+    println!(
+        "  · 数据目录：{}（配置/日志/热词/模型）",
+        paths.data_root.display()
+    );
     println!("  · 日志目录：{}", paths.logs_dir().display());
     Ok(())
+}
+
+/// 读部署后的方案（`build\rime_ice.schema.yaml`）里 traditionalization 的 reset
+///
+/// 为什么要读部署产物：`--rime-status` 原先只读 config.toml，运行期被切到繁体时它仍报"简"，
+/// 报障时所有工具都说正常（2026-10-26）。
+fn deployed_trad_reset(user_dir: &Path) -> Option<bool> {
+    let p = user_dir.join("build").join("rime_ice.schema.yaml");
+    parse_trad_reset(&std::fs::read_to_string(p).ok()?)
+}
+
+fn parse_trad_reset(text: &str) -> Option<bool> {
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        let t = line.trim_start();
+        if t == "- name: traditionalization" || t == "name: traditionalization" {
+            for _ in 0..8 {
+                let Some(next) = lines.next() else { break };
+                let n = next.trim();
+                if n.starts_with("- name:") {
+                    break;
+                }
+                if let Some(v) = n.strip_prefix("reset:") {
+                    return Some(v.trim().trim_matches('"').starts_with('1'));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn run_rime_status(paths: &Paths, cfg: &Config) -> Result<()> {
@@ -3393,7 +3629,28 @@ fn run_rime_status(paths: &Paths, cfg: &Config) -> Result<()> {
     println!("WeaselDeployer: {}", info.deployer.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "（未找到）".into()));
     println!("用户目录: {}{}", info.user_dir.display(), if info.user_dir_custom { "（自定义）" } else { "（默认）" });
     println!("主力语言: {}（配置值: {:?}）", cfg.rime.lang().label(), cfg.rime.primary_lang);
-    println!("英文混输: {}  简繁: {}  语法模型: {}", cfg.rime.english_mixed, if cfg.rime.zh_trad { "繁" } else { "简" }, cfg.rime.grammar);
+    println!("英文混输: {}  语法模型: {}", cfg.rime.english_mixed, cfg.rime.grammar);
+    // 简繁：配置值 ≠ 部署值是最常见的"报障时所有工具都说正常"（见 项目调试过程.md §56）。
+    // 这里把两份都打出来，并明确提示不一致。
+    match deployed_trad_reset(&info.user_dir) {
+        Some(v) => {
+            let flag = if v != cfg.rime.zh_trad {
+                "  ⚠ 与配置不一致：需要重新部署"
+            } else {
+                ""
+            };
+            println!(
+                "简繁: 配置={}  部署={}{}",
+                if cfg.rime.zh_trad { "繁" } else { "简" },
+                if v { "繁" } else { "简" },
+                flag
+            );
+        }
+        None => println!(
+            "简繁: 配置={}  部署=（未部署或读不到 build\\rime_ice.schema.yaml）",
+            if cfg.rime.zh_trad { "繁" } else { "简" }
+        ),
+    }
     if res.join("rime").is_dir() {
         let mut names: Vec<String> = Vec::new();
         for e in std::fs::read_dir(res.join("rime")).into_iter().flatten().flatten() {
@@ -3451,6 +3708,11 @@ pub fn rime_deploy_logged(
             log(l);
         }
     }
+    // 简繁防误触钩子：必须在 copy_schemes 之后（否则会被当成陈旧文件清掉）
+    match rime::write_guard_lua(&info.user_dir) {
+        Ok(l) => log(l),
+        Err(e) => log(format!("  !! 铺简繁防误触钩子失败: {e:#}")),
+    }
     log("写热词…".into());
     for l in hotwords::ensure_user_packs(cfg, paths) {
         log(l);
@@ -3499,6 +3761,28 @@ pub fn rime_deploy_logged(
             Err(e) => log(format!("  !! 铺学习钩子失败: {e:#}")),
         }
     }
+    // 打字侧「即时生效」翻译器（2026-11-05）：
+    // custom_phrase 的 user_dict 被 librime 缓存在进程内，写完 txt 不会重读 →
+    // 没有这个 lua 的话，设置页加了快捷输入必须重启输入法/重新部署才出候选。
+    let mut phrases_path: Option<String> = None;
+    if terms_written {
+        match rime::write_phrases_lua(&info.user_dir) {
+            Ok(l) => {
+                log(l);
+                phrases_path = Some(
+                    info.user_dir
+                        .join(rime::TERMS_FILE)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+                log(format!(
+                    "  热词表（lua 实时读）→ {}",
+                    phrases_path.clone().unwrap_or_default()
+                ));
+            }
+            Err(e) => log(format!("  !! 铺热词翻译器失败: {e:#}")),
+        }
+    }
     for l in rime::write_configs(
         &info.user_dir,
         &plan,
@@ -3506,6 +3790,7 @@ pub fn rime_deploy_logged(
         terms_written,
         cfg.hotwords.prefix_completion,
         learn_path.as_deref(),
+        phrases_path.as_deref(),
     )? {
         log(l);
     }
@@ -3593,16 +3878,124 @@ pub fn launch_exe(p: &Path, args: &[&str]) {
     let _ = std::process::Command::new(p).args(args).spawn();
 }
 
+/// 选择本次启动的渲染后端
+///
+/// 1) 上次首帧超时（`logs\hang.txt`）→ 换另一个后端（不覆盖用户设置，只影响本次）；
+/// 2) 否则按 `general.gui_render`：glow/ogl/opengl → OpenGL；software/auto/gpu → wgpu。
+fn pick_gui_renderer(cfg: &Config) -> String {
+    if let Some(h) = diag::take_hang() {
+        if let Some(last) = diag::hang_renderer(&h) {
+            let next = if last == "glow" { "wgpu" } else { "glow" };
+            tracing::warn!(
+                "上次界面首帧超时（{last}）→ 本次改用 {next}；现场见 logs\\hang.prev.txt"
+            );
+            return next.into();
+        }
+    }
+    match cfg.general.gui_render.trim().to_ascii_lowercase().as_str() {
+        "glow" | "ogl" | "opengl" => "glow".into(),
+        _ => "wgpu".into(),
+    }
+}
+
+/// 首帧看门狗：8 秒内没画出第一帧 → 写 hang.txt（含最后阶段/渲染后端）→ 提示 → 退出
+///
+/// 为什么不在主线程里判断：主线程可能正卡在驱动里，只有独立线程还能动。
+/// 退出码 3 与"正常退出 0 / 渲染起不来 2"区分开，便于脚本判定。
+fn spawn_gui_watchdog(renderer: &str) {
+    let r = renderer.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("gui-watchdog".into())
+        .spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while Instant::now() < deadline {
+                if diag::first_frame_seen() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if diag::first_frame_seen() {
+                return;
+            }
+            let p = diag::write_hang("first_frame_timeout", &r);
+            let path = p
+                .map(|x| x.display().to_string())
+                .unwrap_or_else(|| "（写失败）".into());
+            let msg = format!(
+                "界面在 8 秒内没有画出来（渲染后端 {r}）。\n\n诊断已记录：{path}\n下次启动会自动换一个渲染后端。\n\n如果反复出现，请把上面这个文件发给我们。"
+            );
+            let msg2 = msg.clone();
+            let _ = std::thread::Builder::new()
+                .name("gui-hang-msg".into())
+                .spawn(move || native_error_box(&msg2));
+            std::thread::sleep(Duration::from_millis(2000));
+            std::process::exit(3);
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("启动首帧看门狗失败（不影响界面）: {e}");
+    }
+}
+
+#[cfg(windows)]
+fn native_error_box(msg: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    use windows::core::PCWSTR;
+    let text: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+    let cap: Vec<u16> = "倾听输入法".encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text.as_ptr()),
+            PCWSTR(cap.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn native_error_box(msg: &str) {
+    eprintln!("{msg}");
+}
+
 fn init_logging(paths: &Paths, level: &str, console: bool) {
     use tracing_subscriber::prelude::*;
     let dir = paths.logs_dir();
-    std::fs::create_dir_all(&dir).ok();
-    let appender = tracing_appender::rolling::daily(&dir, "app.log");
+    let _ = std::fs::create_dir_all(&dir);
+
+    // 绝不 panic：目录不可写（典型：Program Files 非提权）时退到 LocalAppData，
+    // 再不行就只留控制台。旧实现用 `rolling::daily()`，目录不可写会 `.expect` panic，
+    // 而 GUI 子系统没有控制台 → 启动即死且不留任何日志（见 项目调试过程.md §56）。
+    let make = || {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("app.log")
+    };
+    let appender = make()
+        .build(&dir)
+        .ok()
+        .or_else(|| {
+            let alt = crate::diag::logs_dir();
+            let _ = std::fs::create_dir_all(&alt);
+            let a = make().build(&alt).ok();
+            if a.is_some() {
+                crate::diag::phase_note("logging", &format!("fallback_dir={}", alt.display()));
+            }
+            a
+        });
+
+    let mk_filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level))
+    };
+
+    let Some(appender) = appender else {
+        // 连 LocalAppData 都写不了：不装文件层，让程序继续跑（界面上仍能看到状态）
+        let _ = tracing_subscriber::registry().with(mk_filter()).try_init();
+        crate::diag::phase_note("logging", "file_unavailable");
+        return;
+    };
     let (nb, guard) = tracing_appender::non_blocking(appender);
     std::mem::forget(guard);
-
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level));
 
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(nb)
@@ -3611,16 +4004,17 @@ fn init_logging(paths: &Paths, level: &str, console: bool) {
     if console {
         let console_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
         let _ = tracing_subscriber::registry()
-            .with(filter)
+            .with(mk_filter())
             .with(file_layer)
             .with(console_layer)
             .try_init();
     } else {
         let _ = tracing_subscriber::registry()
-            .with(filter)
+            .with(mk_filter())
             .with(file_layer)
             .try_init();
     }
+    crate::diag::phase("logging_ready");
 }
 
 /// GUI 子系统程序若从终端启动，挂到父控制台以便看到 CLI 输出
@@ -3862,17 +4256,157 @@ fn create_show_event() -> Option<isize> {
     None
 }
 
-/// 请求已有实例把设置窗口显示到前台（第二次启动 / `--settings` 调用）
+/// 已有实例是否在跑（只探测，不获取；用于 `--settings` 快速路径）
+#[cfg(windows)]
+fn instance_running() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::{
+        OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE, WaitForSingleObject,
+    };
+    unsafe {
+        let Ok(h) = OpenMutexW(
+            SYNCHRONIZATION_SYNCHRONIZE,
+            false,
+            windows::core::w!("Global\\ListenRust"),
+        ) else {
+            return false;
+        };
+        let r = WaitForSingleObject(h, 0);
+        let _ = CloseHandle(h);
+        r == WAIT_TIMEOUT
+    }
+}
+
+#[cfg(not(windows))]
+fn instance_running() -> bool {
+    false
+}
+
+/// 向 ListenCtl 发一条命令并读一行回复；超时返回 None（**不阻塞调用方**）
+///
+/// 用独立线程读：管道服务端卡死时不能把"点设置"的新进程也拖住。
+#[cfg(windows)]
+fn ctl_send(cmd: &str, timeout: Duration) -> Option<String> {
+    use std::io::{BufRead, BufReader, Write};
+    let cmd = cmd.to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> Option<String> {
+            let mut f = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(r"\\.\pipe\ListenCtl")
+                .ok()?;
+            f.write_all(cmd.as_bytes()).ok()?;
+            f.write_all(b"\n").ok()?;
+            f.flush().ok()?;
+            let mut line = String::new();
+            let mut br = BufReader::new(f);
+            br.read_line(&mut line).ok()?;
+            Some(line.trim().to_string())
+        })();
+        let _ = tx.send(result);
+    });
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+#[cfg(not(windows))]
+fn ctl_send(_cmd: &str, _timeout: Duration) -> Option<String> {
+    None
+}
+
+/// 取 ListenCtl 服务端进程 PID（用于"ctl 无响应时强制结束旧实例"）
+#[cfg(windows)]
+fn ctl_server_pid() -> Option<u32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(r"\\.\pipe\ListenCtl")
+        .ok()?;
+    let h = HANDLE(f.as_raw_handle() as _);
+    let mut pid = 0u32;
+    unsafe { GetNamedPipeServerProcessId(h, &mut pid).ok()? };
+    (pid != 0).then_some(pid)
+}
+
+#[cfg(not(windows))]
+fn ctl_server_pid() -> Option<u32> {
+    None
+}
+
+/// 结束一个 **listen.exe** 进程（先校验镜像名，避免 PID 复用误杀）
+#[cfg(windows)]
+fn terminate_listen(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        QueryFullProcessImageNameW, TerminateProcess,
+    };
+    use windows::core::PWSTR;
+    unsafe {
+        let Ok(h) = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+            false,
+            pid,
+        ) else {
+            return false;
+        };
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let named = QueryFullProcessImageNameW(
+            h,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+        .is_ok();
+        let exe = if named {
+            String::from_utf16_lossy(&buf[..len as usize]).to_ascii_lowercase()
+        } else {
+            String::new()
+        };
+        let is_listen = exe.ends_with("\\listen.exe");
+        let killed = is_listen && TerminateProcess(h, 9).is_ok();
+        let _ = CloseHandle(h);
+        killed
+    }
+}
+
+#[cfg(not(windows))]
+fn terminate_listen(_pid: u32) -> bool {
+    false
+}
+
+/// 请求已有实例把设置窗口显示到前台（第二次启动 / `--settings` / ctl SHOW_SETTINGS）
+///
+/// 重试 5×100ms：实例刚启动时可能还没建好事件，旧实现只试一次、失败只写一行日志，
+/// 表现就是"点了设置没反应"。
 #[cfg(windows)]
 fn signal_show_settings() {
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
-    match unsafe { OpenEventW(EVENT_MODIFY_STATE, false, SHOW_EVENT_NAME) } {
-        Ok(h) => {
-            if let Err(e) = unsafe { SetEvent(h) } {
-                tracing::warn!("SetEvent(ListenShow) 失败: {e}");
+    for attempt in 0..5 {
+        match unsafe { OpenEventW(EVENT_MODIFY_STATE, false, SHOW_EVENT_NAME) } {
+            Ok(h) => {
+                if let Err(e) = unsafe { SetEvent(h) } {
+                    tracing::warn!("SetEvent(ListenShow) 失败: {e}");
+                }
+                let _ = unsafe { CloseHandle(h) };
+                return;
+            }
+            Err(e) => {
+                if attempt == 4 {
+                    tracing::warn!(
+                        "打开 ListenShow 事件失败（重试 5 次）: {e}；实例可能还在启动或已被强杀"
+                    );
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
         }
-        Err(e) => tracing::warn!("打开 ListenShow 事件失败: {e}"),
     }
 }
 
@@ -3933,4 +4467,63 @@ pub fn set_autostart(enable: bool) -> Result<()> {
 #[cfg(not(windows))]
 pub fn set_autostart(_enable: bool) -> Result<()> {
     anyhow::bail!("开机自启见二期（M6）")
+}
+
+#[cfg(test)]
+mod status_parse_tests {
+    use super::parse_trad_reset;
+
+    #[test]
+    fn reads_deployed_reset_from_compiled_schema() {
+        // 形态与 %APPDATA%\Rime\build\rime_ice.schema.yaml 一致（2026-10-26 实测）
+        let y = "switches:\n    - name: ascii_mode\n      states: [\"中\", \"Ａ\"]\n    - name: traditionalization\n      reset: 1\n      states: [\"简\", \"繁\"]\n";
+        assert_eq!(parse_trad_reset(y), Some(true));
+
+        let y0 = "    - name: traditionalization\n      reset: 0\n";
+        assert_eq!(parse_trad_reset(y0), Some(false));
+
+        // 没有这一项 / 不是传统写法 → None（调用方打印"未部署或读不到"）
+        assert_eq!(parse_trad_reset("switches:\n    - name: ascii_mode\n"), None);
+        assert_eq!(parse_trad_reset(""), None);
+    }
+
+    #[test]
+    fn stops_at_next_switch() {
+        let y = "  - name: traditionalization\n  - name: emoji\n    reset: 1\n";
+        assert_eq!(parse_trad_reset(y), None);
+    }
+}
+
+#[cfg(test)]
+mod window_size_tests {
+    use super::{fit_window, gui_min_size};
+
+    /// 本机实测：1920×1080 @200% → 工作区 960×520 逻辑点。
+    /// 旧代码写死 1040×780 → 比屏幕高 260 点，底部整块看不见（2026-11-05 用户反馈）。
+    #[test]
+    fn fits_200_percent_1080p() {
+        let (w, h) = fit_window((960.0, 520.0));
+        assert!(w <= 960.0 - 16.0, "宽度不能超出工作区: {w}");
+        assert!(h <= 520.0 - 16.0, "高度不能超出工作区: {h}");
+        // 该配置下应该用满可得高度（不能因为写死 780 而顶出屏幕）
+        assert!(h >= 480.0, "别缩得太狠: {h}");
+    }
+
+    #[test]
+    fn normal_work_area_uses_full_size() {
+        let (w, h) = fit_window((1920.0, 1040.0));
+        assert_eq!((w, h), (1040.0, 780.0));
+    }
+
+    #[test]
+    fn tiny_screen_never_exceeds_work_area() {
+        for work in [(640.0, 360.0), (800.0, 480.0), (1024.0, 600.0), (1280.0, 720.0)] {
+            let (w, h) = fit_window(work);
+            assert!(w <= work.0, "{work:?} → 宽 {w} 超出");
+            assert!(h <= work.1, "{work:?} → 高 {h} 超出");
+            // 最小尺寸必须 ≤ 初始尺寸，否则 Windows 会把窗口撑回最小值
+            let (mw, mh) = gui_min_size(w, h);
+            assert!(mw <= w && mh <= h, "{work:?} → min {mw}×{mh} > {w}×{h}");
+        }
+    }
 }

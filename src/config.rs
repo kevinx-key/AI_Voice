@@ -1050,21 +1050,47 @@ fn strip_unc(p: PathBuf) -> PathBuf {
 
 /// 应用路径：root = 配置文件所在目录（绿色部署根）
 #[derive(Debug, Clone)]
-pub struct Paths {    pub root: PathBuf,
+pub struct Paths {
+    /// exe 同级目录：**只读资源**（`resources\`）与 fork 约定的 `voice_off.flag`
+    pub root: PathBuf,
+    /// 可写数据目录：`config.toml` / `logs` / `hotwords` / `models`。
+    ///
+    /// 默认 = `root`；`root` 不可写时（典型：装到 `C:\Program Files\Listen` 后
+    /// 非提权运行）回退到 `%LOCALAPPDATA%\Listen`，否则写配置/日志会失败，
+    /// 日志层甚至会在初始化时 panic（见 `项目调试过程.md` §56）。
+    pub data_root: PathBuf,
     pub config_file: PathBuf,
+    /// `root` 是否可写（GUI/`--status` 用来明确告知，而不是静默失败）
+    pub writable: bool,
 }
 
 impl Paths {
-    /// 默认：exe 同级 config.toml
+    /// 默认：exe 同级 `config.toml`；不可写则数据目录回退到 LocalAppData
     pub fn default_from_exe() -> Result<Self> {
         let exe = std::env::current_exe().context("无法获取 exe 路径")?;
         let dir = exe
             .parent()
             .context("exe 无父目录")?
             .to_path_buf();
+        let writable = crate::diag::dir_writable(&dir);
+        let data_root = if writable {
+            dir.clone()
+        } else {
+            let d = crate::diag::data_dir();
+            let _ = std::fs::create_dir_all(&d);
+            // 首次回退：把安装目录里的旧配置带过来（升级用户不丢设置）
+            let src = dir.join("config.toml");
+            let dst = d.join("config.toml");
+            if src.is_file() && !dst.exists() {
+                let _ = std::fs::copy(&src, &dst);
+            }
+            d
+        };
         Ok(Self {
-            config_file: dir.join("config.toml"),
+            config_file: data_root.join("config.toml"),
             root: dir,
+            data_root,
+            writable,
         })
     }
 
@@ -1079,7 +1105,9 @@ impl Paths {
         let root = strip_unc(root);
         Ok(Self {
             config_file: root.join(config_file.file_name().unwrap_or_default()),
+            data_root: root.clone(),
             root,
+            writable: true,
         })
     }
 
@@ -1093,7 +1121,27 @@ impl Paths {
     }
 
     pub fn logs_dir(&self) -> PathBuf {
-        self.root.join("logs")
+        self.data_root.join("logs")
+    }
+
+    /// 热词包目录（默认随数据目录；`[hotwords] dir` 显式配置时优先）
+    pub fn hotwords_dir(&self) -> PathBuf {
+        self.data_root.join("hotwords")
+    }
+
+    /// 模型目录的**父目录**（`install::plan_for` 会在其下拼 `models\`）
+    pub fn models_root(&self) -> PathBuf {
+        self.data_root.clone()
+    }
+
+    /// fork 约定的语音总开关标志（必须在 exe 同级，fork 只认这个位置）
+    pub fn flag_path(&self) -> PathBuf {
+        self.root.join("voice_off.flag")
+    }
+
+    /// 数据目录里的同名标志：root 只读时仍能记录状态（fork 读不到，但诊断可见）
+    pub fn data_flag_path(&self) -> PathBuf {
+        self.data_root.join("voice_off.flag")
     }
 
     /// 资源目录：显式配置优先；否则 exe 同级 resources\，再往上级找 3 层（开发期 target\release 用）
@@ -1111,6 +1159,20 @@ impl Paths {
             dir = d.parent().map(|p| p.to_path_buf());
         }
         self.root.join("resources")
+    }
+}
+
+#[cfg(test)]
+impl Paths {
+    /// 测试用：root = data_root = 给定目录，视为可写
+    pub fn for_test(dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
+        Self {
+            config_file: dir.join("config.toml"),
+            root: dir.clone(),
+            data_root: dir,
+            writable: true,
+        }
     }
 }
 

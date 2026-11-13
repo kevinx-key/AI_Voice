@@ -1,4 +1,4 @@
-# verify_rime.ps1 — Rime 二合一「文件层」自动校验（装机验收用）
+﻿# verify_rime.ps1 — Rime 二合一「文件层」自动校验（装机验收用）
 #
 # 用法：
 #   .\verify_rime.ps1                     # 用默认用户目录 %APPDATA%\Rime
@@ -123,8 +123,20 @@ if ($AfterUninstall) {
           if ($cb -match "lua_processor@\*listen_learn") { Ok "学习钩子已编译进方案" } else { Bad "patch 没生效：编译产物里没有 lua_processor@*listen_learn" }
         }
         if ($cb -match "user_dict:\s*listen_hotwords") { Ok "热词表已编译进方案" } else { Bad "patch 没生效：编译产物里没有 custom_phrase/user_dict" }
+        # 2026-11-05：打字侧热词「即时生效」翻译器（lua_translator@*listen_phrases）
+        # 为什么必须有：custom_phrase 的 user_dict 被 librime 缓存在进程内（db_pool_），
+        # 写完 txt 不会重读 → 加完快捷输入要重启输入法才出候选。lua 翻译器按 .ver 版本戳重读。
+        if ($cb -match "lua_translator@\*listen_phrases") { Ok "热词即时生效翻译器已编译进方案" } else { Warn "编译产物里没有 lua_translator@*listen_phrases（改词表后要重启输入法才生效）" }
       }
     }
+    # 热词表版本戳：lua 靠它判断要不要重读（长度 + 毫秒时间戳）
+    $ver = Join-Path $UserDir "listen_hotwords.ver"
+    if (Test-Path $ver) { Ok "热词表版本戳存在（$(Get-Content $ver -Raw)）" } else { Warn "没有 listen_hotwords.ver（lua 会退化成每次新输入都重读）" }
+    $plua = Join-Path $UserDir "lua\listen_phrases.lua"
+    if (Test-Path $plua) {
+      $body = Get-Content $plua -Raw
+      if ($body -match "function M\.func" -and $body -match "return M") { Ok "热词即时生效翻译器已铺（lua\listen_phrases.lua）" } else { Bad "lua\listen_phrases.lua 内容不完整（缺 func/return）" }
+    } else { Warn "没有 lua\listen_phrases.lua（未部署或热词全关）" }
     $g = Join-Path $UserDir "wanxiang-lts-zh-hans.gram"
     if (Test-Path $g) { Ok "语法模型已铺（$([math]::Round((Get-Item $g).Length/1MB,1)) MB）" } else { Warn "语法模型缺失（grammar=true 时应存在）" }
     $rc = Join-Path $UserDir "build\rime_ice.schema.yaml"

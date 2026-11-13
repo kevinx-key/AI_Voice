@@ -9,7 +9,9 @@
 //!   字段含义见 `src/chain.rs::Chain::wire`）；
 //!   `REPAIR` → `OK`（2026-10-09 追加：等同于设置页那个「一键修复」按钮，
 //!   给回归/自动化用：`python tools\ctl_client.py REPAIR`）；
-//!   `SUSPEND` / `RESUME` → `OK`（幂等）；`SHOW_SETTINGS` → `OK`；
+//!   `SUSPEND` / `RESUME` → `OK`（幂等）；`SHOW_SETTINGS` → `OK`（仅唤起）；
+//!   `OPEN_SETTINGS` → `OK`（窗口没开，已唤起）| `RESTART`（窗口已开，本实例将退出，调用方接手）|
+//!   `ERR busy`（录音中，不重启）；`RESTART_SETTINGS` → `RESTART` | `ERR busy`（2026-10-26 追加）；
 //!   `SET backend <local|cloud>` / `SET polish <tier>` / `SET hotkey_mode <hold|toggle>`
 //!   / `SET voice <on|off>` → `OK` | `ERR <reason>`；`QUIT` → `OK` 后退出；未知 → `ERR unknown command`
 //!
@@ -375,6 +377,43 @@ mod server {
             "SHOW_SETTINGS" => {
                 crate::signal_show_settings();
                 ("OK".into(), false)
+            }
+            "OPEN_SETTINGS" => {
+                // 目的（2026-10-26）：右键语言栏「设置」永远给出**一个新窗口**，但不叠加。
+                // - 窗口没开：直接唤起，回 OK（调用方退出，不重启进程）；
+                // - 窗口已开：回 RESTART 并 250ms 后退出自己，让调用方（新进程）接手重开；
+                //   用独立线程 exit，**不经过 GUI 线程**，所以旧窗口卡死也能关掉；
+                // - 录音/识别中不重启（避免截断会话），退回"唤起"。
+                if crate::gui::window_visible() {
+                    if cfg.state.is_recording() {
+                        ("ERR busy".into(), false)
+                    } else {
+                        tracing::info!(
+                            "收到 OPEN_SETTINGS（设置窗已开）→ 250ms 后退出，由新实例重建"
+                        );
+                        std::thread::spawn(|| {
+                            std::thread::sleep(Duration::from_millis(250));
+                            std::process::exit(0);
+                        });
+                        ("RESTART".into(), false)
+                    }
+                } else {
+                    crate::signal_show_settings();
+                    ("OK".into(), false)
+                }
+            }
+            "RESTART_SETTINGS" => {
+                // 显式"关旧开新"（不判断窗口可见），供脚本/未来 fork 使用
+                if cfg.state.is_recording() {
+                    ("ERR busy".into(), false)
+                } else {
+                    tracing::info!("收到 RESTART_SETTINGS → 250ms 后退出，由新实例重建");
+                    std::thread::spawn(|| {
+                        std::thread::sleep(Duration::from_millis(250));
+                        std::process::exit(0);
+                    });
+                    ("RESTART".into(), false)
+                }
             }
             "QUIT" => ("OK".into(), true),
             "SET" => (do_set(it.next(), it.next(), cfg), false),

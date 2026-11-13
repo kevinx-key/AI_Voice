@@ -63,6 +63,19 @@ if ($WithModel) {
     Write-Host "    (model NOT included - first run downloads it)" -ForegroundColor Yellow
 }
 
+# ---- 开源中文字体（可选）----
+# 设置界面只用开源字体：放在 resources\fonts\ 的字体随包分发（安装包/zip 都会带），
+# 没有就退回系统里的 Noto Sans SC / 思源黑体等。绝不打包微软雅黑/等线/黑体/宋体。
+$fontRes = Join-Path $root "resources\fonts"
+if (Test-Path -LiteralPath $fontRes) {
+    $fontDst = Join-Path $stage "resources\fonts"
+    New-Item -ItemType Directory -Force -Path $fontDst | Out-Null
+    Copy-Item -LiteralPath (Join-Path $fontRes "*") -Destination $fontDst -Recurse
+    Write-Host "    (open-source font bundled)"
+} else {
+    Write-Host "    (no resources\fonts - UI falls back to system open-source CJK fonts)" -ForegroundColor Yellow
+}
+
 # ---- Rime 资源（二合一）----
 $rimeRes = Join-Path $root "resources\rime"
 if ($WithRime -or $Setup) {

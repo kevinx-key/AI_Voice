@@ -56,6 +56,330 @@ macro_rules! touch {
 /// 悬浮窗恒定不透明度（0~255）：毛玻璃约 65%
 const FLOAT_ALPHA: u8 = 165;
 
+// ============================================================ 设计令牌
+//
+// 2026-11-05 设置页重做：把「字号 / 圆角 / 间距 / 行高」集中成一组常量。
+// 旧界面每处各写一套数字（字号 11~19、Grid 间距 3/4/6/8/10/12、圆角 2/3/6），
+// 结果就是同屏出现四五种节奏。这里的规则：
+//   * 组与组之间（GAP_GROUP）一定比组内行间距（GAP_ROW）更松；
+//   * 所有**面板**（分组卡 / 侧栏 / 顶栏 / 底栏）圆角一律 RADIUS_PANEL；
+//   * 所有**控件**（按钮 / 下拉 / 输入框 / 选中项）圆角一律 RADIUS_CTRL；
+//   * 每行最小高度 ROW_H（≥32px），保证点击区域够大；行内上下留白由 Grid 行高给；
+//   * 侧栏图标比文字小 1px，图标列定宽 + 图文间距固定 → 每一行图文对齐。
+
+/// 正文字号
+const FONT_BODY: f32 = 14.0;
+/// 辅助说明（弱化提示 / 注释）字号
+const FONT_SMALL: f32 = 12.0;
+/// 页面标题字号
+const FONT_TITLE: f32 = 19.0;
+/// 分组标题字号
+const FONT_GROUP: f32 = 14.5;
+/// 侧栏图标字号（比 FONT_BODY 小 1px：图标略小于文字）
+const FONT_ICON: f32 = 13.0;
+
+/// 面板圆角（分组卡 / 侧栏 / 顶栏 / 底栏统一）
+const RADIUS_PANEL: u8 = 10;
+/// 控件圆角（按钮 / 下拉 / 输入框 / 选中项统一）
+const RADIUS_CTRL: u8 = 8;
+
+/// 组内行间距
+const GAP_ROW: f32 = 10.0;
+/// 表单标签列与控件列的间距
+const GAP_LABEL: f32 = 16.0;
+/// 同一行内控件之间的间距
+const GAP_INLINE: f32 = 8.0;
+/// 组与组之间的间距（**比组内更松**）
+const GAP_GROUP: f32 = 24.0;
+/// 卡片内边距（四个方向一致）
+const PAD_CARD: f32 = 16.0;
+/// 页面内容外边距（左右一致，与卡片内边距同源）
+const PAD_PAGE: f32 = 20.0;
+/// 单行最小高度：点击区域
+const ROW_H: f32 = 32.0;
+/// 表单标签列定宽（统一，避免每行参差）
+const LABEL_W: f32 = 132.0;
+/// 侧栏宽度（两侧留白都取 PAD_CARD，保证左右一致）
+const SIDEBAR_W: f32 = 212.0;
+/// 侧栏折叠阈值（逻辑点）：窗口比这窄时只留图标列，把宽度让给内容
+const COMPACT_W: f32 = 900.0;
+/// 折叠后的侧栏宽度（图标轨道）
+const SIDEBAR_RAIL: f32 = 60.0;
+/// 窄窗口下的页面留白（比 PAD_PAGE 小，多挤 16pt 给内容）
+const PAD_PAGE_COMPACT: f32 = 12.0;
+/// 侧栏条目高度
+const NAV_H: f32 = 32.0;
+/// 侧栏图标列定宽
+const NAV_ICON_W: f32 = 20.0;
+/// 图标与文字的间距（所有条目一致）
+const NAV_ICON_GAP: f32 = 8.0;
+
+/// 设置页的分区（侧栏一项 = 一个页面）
+///
+/// 排序依据：使用频率 + 重要性。「常用」放语音输入日常会改的东西；
+/// 「进阶」是配好就不常动的；「系统」是排障入口。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Page {
+    /// 通用：热键 / 录音方式 / 出字节奏 / 麦克风 / 设备
+    General,
+    /// 快捷输入：编码 → 任意文本（最高频的自定义项）
+    QuickInput,
+    /// 热词表：词表包 / 学习 / 录音热词上限
+    Hotwords,
+    /// 输入法：Rime 安装 / 语言 / 部署
+    Rime,
+    /// 文本整理
+    Polish,
+    /// 识别（ASR 后端）
+    Asr,
+    /// 注入
+    Inject,
+    /// 悬浮窗
+    Floating,
+    /// 本地模型
+    Model,
+    /// 链路诊断
+    Diag,
+    /// 运行日志
+    Log,
+}
+
+impl Page {
+    /// 侧栏图标（单码位 emoji，egui 自带 emoji 字体可渲染）
+    fn icon(self) -> &'static str {
+        match self {
+            Page::General => "🎙",
+            Page::QuickInput => "⚡",
+            Page::Hotwords => "📚",
+            Page::Rime => "⌨",
+            Page::Polish => "✍",
+            Page::Asr => "🎧",
+            Page::Inject => "📋",
+            Page::Floating => "🖼",
+            Page::Model => "📦",
+            Page::Diag => "🔍",
+            Page::Log => "📄",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Page::General => "通用",
+            Page::QuickInput => "快捷输入",
+            Page::Hotwords => "热词表",
+            Page::Rime => "输入法",
+            Page::Polish => "文本整理",
+            Page::Asr => "识别",
+            Page::Inject => "注入",
+            Page::Floating => "悬浮窗",
+            Page::Model => "本地模型",
+            Page::Diag => "链路诊断",
+            Page::Log => "运行日志",
+        }
+    }
+
+    /// 页面副标题：一句话说清这页是干什么的（放在标题下面，弱化显示）
+    fn desc(self) -> &'static str {
+        match self {
+            Page::General => "热键、录音方式、出字节奏与麦克风——日常最常调的都在这",
+            Page::QuickInput => "打个短码 → 直接出整段文本（快递地址、手机号、常用语）",
+            Page::Hotwords => "一份词表同时驱动打字候选与录音热词",
+            Page::Rime => "倾听输入法（Rime）的安装、主力语言与部署",
+            Page::Polish => "把口语整理成书面语：关闭 / 本地 / 云端",
+            Page::Asr => "识别后端、本地模型类型与云端 ASR",
+            Page::Inject => "上屏方式：剪贴板恢复、延迟与分段分隔符",
+            Page::Floating => "说话时的小窗：位置、停留时间与显示内容",
+            Page::Model => "识别/整理模型的状态、下载与目录",
+            Page::Diag => "8 环链路状态、一键修复与建议",
+            Page::Log => "日志目录、诊断包导出与本次运行提示",
+        }
+    }
+}
+
+/// 侧栏分组（组标题 + 组内页面）。组间用 GAP_GROUP，组内用 GAP_ROW。
+const NAV: &[(&str, &[Page])] = &[
+    (
+        "常用",
+        &[
+            Page::General,
+            Page::QuickInput,
+            Page::Hotwords,
+            Page::Rime,
+        ],
+    ),
+    (
+        "进阶",
+        &[
+            Page::Polish,
+            Page::Asr,
+            Page::Inject,
+            Page::Floating,
+            Page::Model,
+        ],
+    ),
+    ("系统", &[Page::Diag, Page::Log]),
+];
+
+/// 一个「分组卡」：面板圆角 + 统一内边距 + 组标题，组内内容由 `add` 填充。
+///
+/// 调用方在两张卡之间用 `ui.add_space(GAP_GROUP)`（组间比组内松），
+/// 卡内不许再写别的间距常量。
+fn group_frame<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let mut out: Option<R> = None;
+    let visuals = ui.visuals().clone();
+    egui::Frame::new()
+        .fill(visuals.faint_bg_color)
+        .stroke(visuals.widgets.noninteractive.bg_stroke)
+        .corner_radius(egui::CornerRadius::same(RADIUS_PANEL))
+        .inner_margin(egui::Margin::same(PAD_CARD as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(title)
+                    .size(FONT_GROUP)
+                    .strong()
+                    .color(ui.visuals().strong_text_color()),
+            );
+            ui.add_space(GAP_ROW);
+            out = Some(add(ui));
+        });
+    out.expect("group_frame 内容闭包必定执行")
+}
+
+/// 表单网格：两列（标签 / 控件），标签列定宽、行高 ≥ ROW_H、行间距统一。
+///
+/// 用它的原因：旧界面每个分区都自己写 `Grid::new(..).spacing([12.0, 6.0])`，
+/// 于是同屏出现 6/4/8 三种行距、标签宽度也参差不齐。
+fn form_grid(id: &str) -> egui::Grid {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([GAP_LABEL, GAP_ROW])
+        .min_row_height(ROW_H)
+        .min_col_width(LABEL_W)
+}
+
+/// 控件宽度：优先用建议宽度，但绝不超过当前可用宽度（小窗口下不撑破布局）
+///
+/// 旧代码到处是 `desired_width(320.0)` / `ComboBox::width(240.0)`，窗口一窄
+/// 这些控件就把整行撑出可视区（egui 是直接裁剪，不给横向滚动）→ 右侧点不到。
+fn field_w(ui: &egui::Ui, want: f32) -> f32 {
+    want.min((ui.available_width() - 4.0).max(90.0))
+}
+
+/// 侧栏条目：图标（略小于文字）+ 文字（定宽图标列 + 固定图文间距）。
+///
+/// 手绘而不是用 `Button`：需要「图标字号 < 文字字号 + 图文间距固定」，
+/// 用两段 RichText 拼按钮做不到固定列宽。
+/// `compact` = 窄窗口的图标轨道：只画图标，标题放 tooltip。
+fn nav_item(
+    ui: &mut egui::Ui,
+    icon: &str,
+    title: &str,
+    selected: bool,
+    compact: bool,
+) -> egui::Response {
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, NAV_H), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals().clone();
+        let (bg, fg) = if selected {
+            (
+                visuals.selection.bg_fill,
+                visuals.selection.stroke.color,
+            )
+        } else if resp.hovered() {
+            (visuals.widgets.hovered.weak_bg_fill, visuals.text_color())
+        } else {
+            (egui::Color32::TRANSPARENT, visuals.text_color())
+        };
+        if bg != egui::Color32::TRANSPARENT {
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(RADIUS_CTRL), bg);
+        }
+        if compact {
+            // 图标轨道：图标居中（字号仍比正文小 1px）
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon,
+                egui::FontId::proportional(FONT_ICON + 1.0),
+                fg,
+            );
+        } else {
+            let icon_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + GAP_INLINE, rect.min.y),
+                egui::vec2(NAV_ICON_W, rect.height()),
+            );
+            ui.painter().text(
+                icon_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon,
+                egui::FontId::proportional(FONT_ICON),
+                fg,
+            );
+            ui.painter().text(
+                egui::pos2(icon_rect.max.x + NAV_ICON_GAP, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(FONT_BODY),
+                fg,
+            );
+        }
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(title)
+}
+
+/// 把设计令牌灌进 egui 全局样式（字号 / 圆角 / 间距 / 点击区高度）。
+///
+/// 只改尺寸与圆角，**不动配色**（沿用 `Visuals` 现有主题，深浅色都跟着走）。
+fn apply_ui_tokens(ctx: &egui::Context) {
+    // all_styles_mut = 深色/浅色两套 Style 一起改（沿用当前主题的配色，只改尺寸与圆角）
+    ctx.all_styles_mut(|style| {
+        // 字号：三档（标题 / 正文 / 辅助）+ 等宽一档，避免每处自定 size
+        style.text_styles = [
+            (egui::TextStyle::Heading, egui::FontId::proportional(FONT_TITLE)),
+            (egui::TextStyle::Body, egui::FontId::proportional(FONT_BODY)),
+            (egui::TextStyle::Button, egui::FontId::proportional(FONT_BODY)),
+            (egui::TextStyle::Small, egui::FontId::proportional(FONT_SMALL)),
+            (egui::TextStyle::Monospace, egui::FontId::monospace(FONT_BODY)),
+        ]
+        .into();
+
+        // 间距：全局只留两档（行内 GAP_INLINE / 行间 GAP_ROW），组间间距由调用方加 GAP_GROUP
+        style.spacing.item_spacing = egui::vec2(GAP_INLINE, GAP_ROW);
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        // 点击区域：任何可点控件至少 ROW_H 高
+        style.spacing.interact_size = egui::vec2(40.0, ROW_H);
+        style.spacing.icon_width = 16.0;
+        style.spacing.icon_width_inner = 10.0;
+        style.spacing.icon_spacing = GAP_INLINE;
+        style.spacing.indent = GAP_GROUP;
+        style.spacing.combo_width = 240.0;
+        style.spacing.text_edit_width = 240.0;
+        style.spacing.menu_margin = egui::Margin::same(PAD_CARD as i8);
+        style.spacing.window_margin = egui::Margin::same(PAD_CARD as i8);
+
+        // 圆角：控件一档、面板一档（全部同源）
+        let ctrl = egui::CornerRadius::same(RADIUS_CTRL);
+        for w in [
+            &mut style.visuals.widgets.noninteractive,
+            &mut style.visuals.widgets.inactive,
+            &mut style.visuals.widgets.hovered,
+            &mut style.visuals.widgets.active,
+            &mut style.visuals.widgets.open,
+        ] {
+            w.corner_radius = ctrl;
+        }
+        style.visuals.window_corner_radius = egui::CornerRadius::same(RADIUS_PANEL);
+        style.visuals.menu_corner_radius = egui::CornerRadius::same(RADIUS_PANEL);
+    });
+}
+
 /// 给悬浮窗套「半透明 + 毛玻璃」。返回是否成功。
 ///
 /// 本机 glow(WGL 无 alpha 像素格式) 与 wgpu(Win32 surface 无透明 CompositeAlphaMode)
@@ -312,12 +636,26 @@ fn truncate_chars(s: &str, max: usize) -> String {
     format!("{head}…")
 }
 
+/// 设置主窗是否处于"希望可见"状态（ctl 线程用它决定：直接唤起，还是关掉旧窗换新窗）
+pub static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
+
+/// 给 ctl 线程读（`OPEN_SETTINGS`）
+pub fn window_visible() -> bool {
+    WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub struct Gui {
     pub paths: Paths,
     pub cfg: Config,
     pub cmd_tx: Sender<Cmd>,
     pub evt_rx: Receiver<Evt>,
     pub tray: Option<Tray>,
+    /// 当前设置页分区（侧栏选中项）
+    pub page: Page,
+    /// 托管实例（fork 拉起）：托盘只在录音时出现（2026-10-26「小圆点」需求）
+    pub managed: bool,
+    /// 是否允许建托盘（`--no-tray` 时为 false）
+    pub tray_allowed: bool,
     pub state: State,
     pub notes: Vec<String>,
     pub devices: Vec<String>,
@@ -364,10 +702,11 @@ pub struct Gui {
     pub hw_new_note: String,
     /// 列表里选中的行（编辑用）
     hw_pick: Option<usize>,
-    /// 「快捷输入」独立词条表（固定在热词页顶部，不跟词表下拉联动）
-    qe_terms: Vec<crate::hotwords::Term>,
-    qe_loaded: bool,
-    qe_status: String,
+    /// 词表自动保存：改动后等这么久再写盘（连续改多行只写一次）
+    ///
+    /// 2026-11-05：取消「💾 保存到文件」按钮后，词表改动和 config 一样走
+    /// 「改完 → 打标记 → 到点落盘」（见 `hw_autosave_tick`）。
+    hw_autosave_at: Option<Instant>,
     pub hw_dirty: bool,
     pub hw_status: String,
     /// 热词管理器：「恢复内置词表」二次确认
@@ -418,8 +757,15 @@ impl Gui {
         wizard: bool,
         settings: bool,
         show_event: Option<isize>,
+        managed: bool,
     ) -> Self {
+        crate::diag::phase("window");
+        // 首帧之前也可能卡住（驱动/初始化）：先按"窗口应该开着"登记，
+        // 这样再点设置时 ctl 会判定 RESTART 而不是静默 signal。
+        WINDOW_VISIBLE.store(settings || wizard, Ordering::SeqCst);
         install_cjk_font(&cc.egui_ctx);
+        // 字号/圆角/间距/点击区：一次性灌进全局样式（所有分区共用一套节奏）
+        apply_ui_tokens(&cc.egui_ctx);
         let devices = crate::audio::list_input_devices();
         let model_ready = crate::asr::local_model_ready(&paths, &cfg);
         let ms = tray::MenuState {
@@ -428,7 +774,8 @@ impl Gui {
             autostart: cfg.general.autostart,
             model_ready,
         };
-        let tray = tray::build(&ms).ok();
+        // 托管实例（fork 拉起）不在启动时建托盘：圆点只在录音时出现（见 sync_managed_tray）
+        let tray = if managed { None } else { tray::build(&ms).ok() };
         let rime_info = crate::rime::detect(&cfg.rime.user_dir);
         Self {
             install: None,
@@ -438,6 +785,14 @@ impl Gui {
             cmd_tx,
             evt_rx,
             tray,
+            // 首启向导直接落在「输入法」页（向导只做一件事：选语言 → 部署）
+            page: if wizard {
+                Page::Rime
+            } else {
+                Page::General
+            },
+            managed,
+            tray_allowed: true,
             state: State::Idle,
             notes: Vec::new(),
             devices,
@@ -468,13 +823,11 @@ impl Gui {
             hw_pack: String::new(),
             hw_terms: Vec::new(),
             hw_filter: String::new(),
-        hw_new_code: String::new(),
-        hw_new_text: String::new(),
-        hw_new_note: String::new(),
-        hw_pick: None,
-        qe_terms: Vec::new(),
-        qe_loaded: false,
-        qe_status: String::new(),
+            hw_new_code: String::new(),
+            hw_new_text: String::new(),
+            hw_new_note: String::new(),
+            hw_pick: None,
+            hw_autosave_at: None,
             hw_dirty: false,
             hw_status: String::new(),
             hw_confirm_restore: false,
@@ -530,6 +883,39 @@ impl Gui {
             });
         if let Err(e) = spawned {
             tracing::warn!("启动 ListenShow 监听线程失败: {e}");
+        }
+    }
+
+    /// 托管实例：托盘圆点只在录音时出现（2026-10-26）
+    ///
+    /// 旧行为：`--managed` 也建托盘（`managed_tray=true`），用户没开语音也看到任务栏圆点，
+    /// 读成"语音在后台跑"。现在只在真正录音时建、结束即移除；设置入口由输入法语言栏提供。
+    fn sync_managed_tray(&mut self) {
+        if !self.managed || !self.tray_allowed {
+            return;
+        }
+        // 录音 + 紧接的识别阶段都保留红点，避免一次会话里闪一下就没
+        let want = matches!(self.state, State::Recording | State::Transcribing);
+        match (want, self.tray.is_some()) {
+            (true, false) => {
+                let ms = tray::MenuState {
+                    backend: self.cfg.asr.backend.clone(),
+                    polish: self.cfg.polish.tier().to_string(),
+                    autostart: self.cfg.general.autostart,
+                    model_ready: self.last_model_ready,
+                };
+                if let Ok(t) = tray::build(&ms) {
+                    t.set_state(self.state);
+                    t.set_tooltip(&self.chain.summary());
+                    self.tray = Some(t);
+                    crate::diag::phase("tray_on");
+                }
+            }
+            (false, true) => {
+                self.tray = None;
+                crate::diag::phase("tray_off");
+            }
+            _ => {}
         }
     }
 
@@ -598,6 +984,7 @@ impl Gui {
                         // 「倾听输入法 · 待机」，所以这里立刻把链路摘要写回去（2026-10-09）
                         t.set_tooltip(&self.chain.summary());
                     }
+                    self.sync_managed_tray();
                     self.last_state_tick = Instant::now();
                 }
                 Evt::Note(n) => {
@@ -770,6 +1157,8 @@ impl Gui {
             tray::ID_OPEN_CONFIG => crate::open_path(&self.paths.config_file),
             tray::ID_OPEN_LOGS => crate::open_path(&self.paths.logs_dir()),
             tray::ID_QUIT => {
+                // 托盘退出同样先把未到点的自动保存做掉（worker 收到 Quit 即退出进程）
+                self.flush_all();
                 self.quit = true;
                 let _ = self.cmd_tx.send(Cmd::Quit);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -790,7 +1179,12 @@ impl Gui {
             return;
         }
         self.autosave_at = None;
-        self.save_now();
+        // 写失败要有重试：否则 dirty 永远 true、底栏永远「正在自动保存…」，
+        // 而错误文案被挡在 `if !saving` 后面，用户看不到真正原因（2026-11-05 审查）。
+        if !self.save_now() {
+            self.autosave_at = Some(Instant::now() + Duration::from_secs(2));
+            ctx.request_repaint_after(Duration::from_secs(2));
+        }
     }
 
     /// 真正写盘：热键无效时**不写坏值**（保留磁盘上那个有效热键），其它改动照常保存
@@ -921,110 +1315,336 @@ impl Gui {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui) {
-        // 顶部状态条
-        egui::Panel::top("hdr").show(ui, |ui| {
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                let (color, label) = state_visual(self.state);
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 6.0, color);
-                ui.label(egui::RichText::new(label).strong());
-                ui.separator();
-                ui.label(&self.status);
+        // 安装目录只读（典型：Program Files + 非提权）：数据已回退到 LocalAppData。
+        // 必须显眼，否则用户会以为"设置保存了"（实际写进了另一个目录）。
+        if !self.paths.writable {
+            egui::Panel::top("banner").show(ui, |ui| {
+                ui.add_space(2.0);
+                ui.colored_label(
+                    egui::Color32::from_rgb(210, 60, 60),
+                    format!(
+                        "⚠ 安装目录不可写（{}）——配置/日志/热词/模型已改用 {}",
+                        self.paths.root.display(),
+                        self.paths.data_root.display()
+                    ),
+                );
+                ui.add_space(2.0);
             });
-            ui.add_space(2.0);
-        });
+        }
 
-        // 顶部「链路状态」卡（始终可见，2026-10-09：8 环灯 + 一键修复）
-        egui::Panel::top("chain_card").show(ui, |ui| {
-            ui.add_space(2.0);
-            self.chain_card(ui);
-            // 下载/配置进度放在这里：始终可见，不用往下滑（2026-10-23）
-            self.install_strip(ui);
-            ui.add_space(2.0);
-        });
+        // ---- 窄屏降级（2026-11-05）----
+        // 小窗口/小分辨率上固定 212px 的侧栏 + 20pt 留白会把内容区挤到不够放两列表单，
+        // 于是右侧控件被裁掉、按钮点不到。窄于 COMPACT_W 时：侧栏收成图标轨道、
+        // 页面留白减半、状态条右侧按钮缩小。
+        let compact = ui.ctx().content_rect().width() < COMPACT_W;
+        let pad_page = if compact { PAD_PAGE_COMPACT } else { PAD_PAGE };
+        let bar_pad = if compact { PAD_PAGE_COMPACT as i8 } else { PAD_PAGE as i8 };
 
-        // 底部操作条
-        let bottom = egui::Panel::bottom("btns").show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                // 2026-10-21：**取消「保存并应用」按钮** —— 这个界面上所有设置改完立即自动保存
-                // + 热生效（`touch()` 打标记，600ms 后 `autosave_tick()` 落盘）。
-                // 留一个状态字：让人知道「已经存了 / 正在存 / 存失败」。
-                if self.dirty {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(230, 160, 40),
-                        "● 正在自动保存…",
-                    );
-                } else if !self.save_msg.is_empty() {
-                    ui.weak(&self.save_msg);
-                } else {
-                    ui.weak("改动即时生效（自动保存）");
-                }
-                if ui.button("↺ 重新载入").clicked() {
-                    match Config::load_or_create(&self.paths) {
-                        Ok(c) => {
-                            self.cfg = c;
-                            self.dirty = false;
-                            self.refresh_tray_hotkey();
-                            self.status = "已从 config.toml 重新载入".into();
+        // ---- 顶部状态条：一行放下「状态 / 提示 / 总开关 / 一键修复」 ----
+        egui::Panel::top("hdr")
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().panel_fill)
+                    .inner_margin(egui::Margin::symmetric(bar_pad, 8)),
+            )
+            .show(ui, |ui| self.status_bar(ui));
+
+        // ---- 底部操作条：自动保存状态 + 重新载入 + 退出 ----
+        egui::Panel::bottom("btns")
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().panel_fill)
+                    .inner_margin(egui::Margin::symmetric(bar_pad, 6)),
+            )
+            .show(ui, |ui| self.bottom_bar(ui));
+
+        // ---- 左侧导航：两侧留白一致（都取 PAD_CARD），图标列定宽 ----
+        egui::Panel::left("nav")
+            .exact_size(if compact { SIDEBAR_RAIL } else { SIDEBAR_W })
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().faint_bg_color)
+                    .inner_margin(egui::Margin::symmetric(
+                        if compact { 6 } else { PAD_CARD as i8 },
+                        8,
+                    )),
+            )
+            .show(ui, |ui| self.nav(ui, compact));
+
+        // ---- 内容区：页头 + 可滚动正文 ----
+        let central = egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().panel_fill)
+                    .inner_margin(egui::Margin::same(pad_page as i8)),
+            )
+            .show(ui, |ui| {
+                self.page_header(ui, compact);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add_space(GAP_ROW);
+                        // 内容超宽时允许横向滚动：egui 默认是直接裁剪，
+                        // 小窗口下会把右侧控件/按钮裁到看不见（2026-11-05 反馈）。
+                        match self.page {
+                            Page::General => self.page_general(ui),
+                            Page::QuickInput => self.page_quick_input(ui),
+                            Page::Hotwords => self.page_hotwords(ui),
+                            Page::Rime => self.page_rime(ui),
+                            Page::Polish => self.page_polish(ui),
+                            Page::Asr => self.page_asr(ui),
+                            Page::Inject => self.page_inject(ui),
+                            Page::Floating => self.page_floating(ui),
+                            Page::Model => self.page_model(ui),
+                            Page::Diag => self.page_diag(ui),
+                            Page::Log => self.page_log(ui),
                         }
-                        Err(e) => self.status = format!("载入失败: {e:#}"),
-                    }
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let quit = ui.button("退出程序");
-                    if quit.clicked() {
-                        self.quit = true;
-                        let _ = self.cmd_tx.send(Cmd::Quit);
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    self.probe_note("btn_quit", quit.rect);
-                });
+                        // 底部留一点呼吸：滚到底不会贴住底栏
+                        ui.add_space(GAP_GROUP);
+                    });
             });
-            ui.add_space(4.0);
-        });
-
-        // 中间：可滚动的设置区
-        let central = egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    self.section_general(ui);
-                    self.section_asr(ui);
-                    self.section_polish(ui);
-                    self.section_inject(ui);
-                    self.section_floating(ui);
-                    self.section_rime(ui);
-                    self.section_hotwords(ui);
-                    self.section_model(ui);
-                    self.section_log(ui);
-                });
-        });
         if !self.logged_layout {
             self.logged_layout = true;
             tracing::info!(
-                "布局自检: 窗口高 {:.0}px / 底部操作条 rect={:?} / 内容区 rect={:?}",
+                "布局自检: 窗口 {:.0}×{:.0}px（{}）/ 侧栏 {:.0}px / 内容区 rect={:?} / 分区={:?}",
+                ui.max_rect().width(),
                 ui.max_rect().height(),
-                bottom.response.rect,
-                central.response.rect
+                if compact { "窄屏模式" } else { "常规" },
+                if compact { SIDEBAR_RAIL } else { SIDEBAR_W },
+                central.response.rect,
+                self.page
             );
         }
         self.probe_flush();
     }
 
-    fn section_general(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("通用")
-            .default_open(true)
+    /// 顶部状态条（一行）：状态点 + 状态 + 最近提示 + 右侧总开关 / 一键修复
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let enabled = self.cfg.general.voice_enabled;
+        let mut on = enabled;
+        let mut want_repair = false;
+        egui::Sides::new().height(ROW_H).show(
+            ui,
+            |ui| {
+                let (color, label) = state_visual(self.state);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 6.5, color);
+                ui.label(egui::RichText::new(label).strong());
+                ui.separator();
+                // 长提示（注入失败原因等）截断，避免把整条撑宽
+                let avail = (ui.available_width() - 320.0).max(120.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(avail);
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&self.status).size(FONT_SMALL))
+                            .truncate(),
+                    )
+                    .on_hover_text(&self.status);
+                });
+            },
+            |ui| {
+                if ui
+                    .add_enabled(enabled, egui::Button::new("🔧 一键修复"))
+                    .on_hover_text(
+                        "重装钩子 + 重开麦克风 + 重新加载识别模型 + 拉起整理后端；\
+                         只修“不必重启进程就能修”的环，录音/识别中不可用",
+                    )
+                    .clicked()
+                {
+                    want_repair = true;
+                }
+                ui.checkbox(&mut on, "启用语音输入")
+                    .on_hover_text("OFF = 停引擎（卸模型/摘热键），倾听输入法不再自动拉起");
+            },
+        );
+        if on != enabled {
+            self.cfg.general.voice_enabled = on;
+            let ctx = ui.ctx().clone();
+            self.apply(&ctx);
+        }
+        if want_repair {
+            let _ = self.cmd_tx.send(crate::Cmd::Repair);
+            self.status = "已请求一键修复…".into();
+        }
+        // 下载/配置进度：需要时才出现（不需要时这里零高度）
+        self.install_strip(ui);
+    }
+
+    /// 底部操作条：自动保存状态（左）+ 重新载入 / 退出（右）
+    fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        // 两个闭包要共用 self：先取局部值，动作只置标记，show 之后再真正执行
+        //
+        // `saving` 只在「真有排队的定时器」时为真：保存失败后 `dirty` 仍是 true，
+        // 但那不是「正在保存」，得把错误文案露出来（2026-11-05 审查）。
+        let saving = (self.dirty && self.autosave_at.is_some())
+            || (self.hw_dirty && self.hw_autosave_at.is_some());
+        let unsaved = self.dirty || self.hw_dirty;
+        let save_msg = if unsaved && !saving {
+            // 失败场景：优先显示失败原因（可能来自 config 或词表）
+            if self.hw_dirty && !self.hw_status.is_empty() {
+                format!("{}（{}）", self.hw_status, self.save_msg)
+            } else {
+                self.save_msg.clone()
+            }
+        } else {
+            self.save_msg.clone()
+        };
+        let mut want_quit = false;
+        let mut want_reload = false;
+        egui::Sides::new().height(ROW_H).show(
+            ui,
+            |ui| {
+                if saving {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(230, 160, 40),
+                        "● 正在自动保存…",
+                    );
+                } else if !save_msg.is_empty() {
+                    ui.weak(&save_msg);
+                } else {
+                    ui.weak("改动即时生效（自动保存）");
+                }
+            },
+            |ui| {
+                if ui
+                    .button("退出程序")
+                    .on_hover_text("退出倾听输入法（语音引擎与设置窗一起关）")
+                    .clicked()
+                {
+                    want_quit = true;
+                }
+                if ui
+                    .button("↺ 重新载入")
+                    .on_hover_text(
+                        "丢掉界面上的临时改动，重新从 config.toml 读（自动保存已经生效，一般用不到）",
+                    )
+                    .clicked()
+                {
+                    want_reload = true;
+                }
+            },
+        );
+        if want_quit {
+            // 先落盘再退出：`Cmd::Quit` 会让 worker 直接 process::exit，之后没有帧可跑了
+            self.flush_all();
+            self.quit = true;
+            let _ = self.cmd_tx.send(Cmd::Quit);
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if want_reload {
+            match Config::load_or_create(&self.paths) {
+                Ok(c) => {
+                    self.cfg = c;
+                    self.dirty = false;
+                    self.hw_reload();
+                    self.refresh_tray_hotkey();
+                    self.status = "已从 config.toml 重新载入".into();
+                }
+                Err(e) => self.status = format!("载入失败: {e:#}"),
+            }
+        }
+    }
+
+    /// 侧栏导航：分组标题之间用 GAP_GROUP，组内条目用 GAP_ROW
+    ///
+    /// `compact` = 窄窗口的图标轨道（只有图标 + tooltip）；并且整体可纵向滚动，
+    /// 否则窗口一矮（小屏笔电 480pt 高）下面几个分区就点不到了。
+    fn nav(&mut self, ui: &mut egui::Ui, compact: bool) {
+        egui::ScrollArea::vertical()
+            .id_salt("nav_scroll")
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                egui::Grid::new("g_general")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if compact {
+                    // 图标轨道里只留一个"听"字标（版本号放 tooltip，别挤高度）
+                    ui.add_space(GAP_INLINE);
+                    ui.horizontal_wrapped(|ui| {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "听",
+                            egui::FontId::proportional(FONT_BODY),
+                            ui.visuals().strong_text_color(),
+                        );
+                        resp.on_hover_text(format!(
+                            "倾听输入法 v{}",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    });
+                } else {
+                    ui.add_space(GAP_INLINE);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("倾听输入法")
+                                .size(FONT_GROUP)
+                                .strong(),
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .size(FONT_SMALL)
+                            .weak(),
+                    );
+                }
+                for (group, pages) in NAV.iter() {
+                    ui.add_space(if compact { GAP_ROW } else { GAP_GROUP });
+                    if compact {
+                        // 轨道模式用一个细分隔线代表分组（文字会撑破 60px 宽）
+                        ui.add_space(2.0);
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 1.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::CornerRadius::ZERO,
+                            ui.visuals().widgets.noninteractive.bg_stroke.color,
+                        );
+                        ui.add_space(2.0);
+                    } else {
+                        ui.label(
+                            egui::RichText::new(*group)
+                                .size(FONT_SMALL)
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_space(GAP_INLINE);
+                    }
+                    for p in pages.iter() {
+                        if nav_item(ui, p.icon(), p.title(), self.page == *p, compact).clicked() {
+                            self.page = *p;
+                        }
+                    }
+                }
+            });
+    }
+
+    /// 页头：标题 + 一句话说明（左侧对齐，与正文同一条左边线）
+    fn page_header(&mut self, ui: &mut egui::Ui, compact: bool) {
+        ui.add_space(GAP_INLINE);
+        ui.label(
+            egui::RichText::new(self.page.title())
+                .size(if compact { FONT_GROUP + 2.0 } else { FONT_TITLE })
+                .strong(),
+        );
+        ui.add_space(GAP_INLINE);
+        ui.label(
+            egui::RichText::new(self.page.desc())
+                .size(FONT_SMALL)
+                .color(ui.visuals().weak_text_color()),
+        );
+    }
+
+    /// 通用：最常改的东西。三张卡：热键与录音 / 出字与资源 / 输入设备与系统。
+    fn page_general(&mut self, ui: &mut egui::Ui) {
+        group_frame(ui, "热键与录音", |ui| {
+            form_grid("g_general").show(ui, |ui| {
                         ui.label("主热键");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .text_edit_singleline(&mut self.cfg.general.hotkey)
                                 .changed()
@@ -1111,7 +1731,7 @@ impl Gui {
                         ui.end_row();
 
                         ui.label(if is_vad { "最长段上限（秒）" } else { "分段长度（秒）" });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(egui::DragValue::new(&mut self.cfg.general.segment_seconds).range(1..=60))
                                 .on_hover_text(if is_vad {
@@ -1131,7 +1751,7 @@ impl Gui {
                         ui.end_row();
 
                         ui.label(if is_vad { "尾部静音（秒）" } else { "静音断句（秒）" });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(egui::DragValue::new(&mut self.cfg.general.silence_seconds).speed(0.1).range(0.0..=3.0))
                                 .on_hover_text(if is_vad {
@@ -1152,7 +1772,7 @@ impl Gui {
 
                         if is_vad {
                             ui.label("VAD 灵敏度阈值");
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 if ui
                                     .add(egui::DragValue::new(&mut self.cfg.general.vad_threshold).speed(0.01).range(0.05..=0.95))
                                     .on_hover_text(
@@ -1169,7 +1789,7 @@ impl Gui {
                             ui.end_row();
 
                             ui.label("最短语音（秒）");
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 if ui
                                     .add(egui::DragValue::new(&mut self.cfg.general.vad_min_speech_seconds).speed(0.05).range(0.0..=2.0))
                                     .on_hover_text(
@@ -1195,11 +1815,11 @@ impl Gui {
                         }
 
                         ui.label("麦克风预热");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             let cur = self.cfg.general.prewarm_gear();
                             egui::ComboBox::from_id_salt("prewarm_gear")
                                 .selected_text(self.cfg.general.prewarm_label())
-                                .width(220.0)
+                                .width(field_w(ui, 220.0))
                                 .show_ui(ui, |ui| {
                                     // 手改过 config.toml（非预设值）时，先把现值原样显示出来
                                     if cur.is_none() {
@@ -1243,13 +1863,18 @@ let hint = if *minutes == 0 {
                             "默认「永不关麦」：按下即录、不丢起头；觉得占资源就选「只在按下时开麦」或空闲 N 分钟关",
                         );
                         ui.end_row();
+            });
+        });
 
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "出字与资源", |ui| {
+            form_grid("g_general_out").show(ui, |ui| {
                         ui.label("模型释放");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             let cur = self.cfg.general.model_release_gear();
                             egui::ComboBox::from_id_salt("model_release")
                                 .selected_text(self.cfg.general.model_release_label())
-                                .width(220.0)
+                                .width(field_w(ui, 220.0))
                                 .show_ui(ui, |ui| {
                                     if cur.is_none() {
                                         let _ = ui.selectable_label(
@@ -1285,11 +1910,11 @@ let hint = if *minutes == 0 {
                         ui.end_row();
 
                         ui.label("整理后端停止");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             let cur = self.cfg.general.llm_idle_stop_gear();
                             egui::ComboBox::from_id_salt("llm_idle_stop")
                                 .selected_text(self.cfg.general.llm_idle_stop_label())
-                                .width(240.0)
+                                .width(field_w(ui, 240.0))
                                 .show_ui(ui, |ui| {
                                     if cur.is_none() {
                                         let _ = ui.selectable_label(
@@ -1320,10 +1945,9 @@ let hint = if *minutes == 0 {
                             "llama-server 是独立进程（约 2.8GB）；停掉后空置期第一次整理用原文，之后照常润色",
                         );
                         ui.end_row();
-                        ui.end_row();
 
                         ui.label("出字间隔");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             // 2026-10-20：四档可选（10/20/40/60 秒）。
                             // 用户报「按住说了半天没字，要等一分钟或松手才出」→ 老默认 60s 太长。
                             let mut gear = self.cfg.general.flush_gear();
@@ -1360,7 +1984,14 @@ let hint = if *minutes == 0 {
                             }
                         });
                         ui.end_row();
+            });
+        });
 
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "输入设备与系统", |ui| {
+            // 门控引擎在上一张卡里选，这里要重新读一次（闭包不共享局部变量）
+            let is_vad = self.cfg.general.gate_engine.trim().eq_ignore_ascii_case("vad");
+            form_grid("g_general_sys").show(ui, |ui| {
                         if !is_vad {
                             ui.label(
                                 egui::RichText::new("兼容：能量门参数（仅 gate_engine = energy 时生效）").weak(),
@@ -1415,7 +2046,7 @@ let hint = if *minutes == 0 {
                         let default_name = crate::audio::default_input_device_name()
                             .unwrap_or_else(|| "（无默认设备）".into());
                         egui::ComboBox::from_id_salt("dev")
-                            .width(360.0)
+                            .width(field_w(ui, 360.0))
                             .selected_text(if dev.is_empty() {
                                 format!("系统默认（{default_name}）")
                             } else {
@@ -1454,8 +2085,8 @@ let hint = if *minutes == 0 {
                             touch!(self);
                         }
                         ui.end_row();
-                    });
             });
+        });
     }
 
     /// 顶部链路状态卡里的「本地模型」进度条（2026-10-23）
@@ -1463,7 +2094,7 @@ let hint = if *minutes == 0 {
     /// 用户反馈：进度原来在下面「识别」分区里，不滑动根本看不见 → 挪到顶部，
     /// 和 8 环灯放在一起（始终可见）。下面那个详细面板保留（有说明文字）。
     fn install_strip(&mut self, ui: &mut egui::Ui) {
-        let plan = crate::install::plan_for(&self.cfg, &self.paths.root);
+        let plan = crate::install::plan_for(&self.cfg, &self.paths.data_root);
         let missing = plan.needed();
         let running = self
             .install
@@ -1487,16 +2118,15 @@ let hint = if *minutes == 0 {
                 if running { "下载/配置中" } else { "缺模型，待下载" }
             );
         }
-        ui.add_space(2.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("本地模型");
+        ui.add_space(GAP_ROW);
+        group_frame(ui, "本地模型下载 / 配置", |ui| {
+            ui.horizontal_wrapped(|ui| {
                 if let Some(p) = self.install.clone() {
                     ui.label(p.phase.label());
                     if p.total > 0 {
                         ui.add(
                             egui::ProgressBar::new((p.done as f32 / p.total as f32).clamp(0.0, 1.0))
-                                .desired_width(200.0)
+                                .desired_width(field_w(ui, 200.0))
                                 .show_percentage(),
                         );
                         ui.weak(&p.msg);
@@ -1528,8 +2158,10 @@ let hint = if *minutes == 0 {
     ///
     /// 需求：设置页要能看到下载进度与自动配置进度；提供「取消」并**删除已下载文件**；
     /// 只是关掉设置页 **不打断**（下载在 worker 线程跑，这里只显示与发取消）。
-    fn install_panel(&mut self, ui: &mut egui::Ui) {
-        let plan = crate::install::plan_for(&self.cfg, &self.paths.root);
+    ///
+    /// 返回是否真的画了卡（调用方据此决定要不要补组间距）。
+    fn install_panel(&mut self, ui: &mut egui::Ui) -> bool {
+        let plan = crate::install::plan_for(&self.cfg, &self.paths.data_root);
         let missing = plan.needed();
         let running = self.install.as_ref().map(|p| {
             !matches!(
@@ -1541,11 +2173,10 @@ let hint = if *minutes == 0 {
         }).unwrap_or(false);
 
         if !missing && self.install.is_none() {
-            return;
+            return false;
         }
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("本地模型");
+        group_frame(ui, "本地模型", |ui| {
+            ui.horizontal_wrapped(|ui| {
                 if running {
                     ui.colored_label(egui::Color32::from_rgb(230, 160, 40), "下载 / 配置中…");
                 } else if missing {
@@ -1563,13 +2194,13 @@ let hint = if *minutes == 0 {
 
             if let Some(p) = &self.install {
                 if !matches!(p.phase, crate::install::Phase::Done) || missing {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(format!("阶段：{}", p.phase.label()));
                         if p.total > 0 {
                             let frac = p.done as f32 / p.total as f32;
                             ui.add(
                                 egui::ProgressBar::new(frac.clamp(0.0, 1.0))
-                                    .desired_width(220.0)
+                                    .desired_width(field_w(ui, 220.0))
                                     .show_percentage(),
                             );
                         }
@@ -1581,7 +2212,7 @@ let hint = if *minutes == 0 {
                 }
             }
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if running {
                     if ui
                         .button("✖ 取消下载并删除文件")
@@ -1610,18 +2241,16 @@ let hint = if *minutes == 0 {
                 }
             });
         });
-        ui.add_space(4.0);
+        true
     }
 
-    fn section_asr(&mut self, ui: &mut egui::Ui) {
-        self.install_panel(ui);
-        egui::CollapsingHeader::new("识别")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("g_asr")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
+    /// 识别：先看模型是否就绪（缺模型时才出现下载卡），再选后端
+    fn page_asr(&mut self, ui: &mut egui::Ui) {
+        if self.install_panel(ui) {
+            ui.add_space(GAP_GROUP);
+        }
+        group_frame(ui, "识别后端", |ui| {
+            form_grid("g_asr").show(ui, |ui| {
                         ui.label("识别后端");
                         let mut b = self.cfg.asr.backend.clone();
                         egui::ComboBox::from_id_salt("backend")
@@ -1665,7 +2294,7 @@ let hint = if *minutes == 0 {
                         ui.end_row();
 
                         ui.label("语言");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .text_edit_singleline(&mut self.cfg.asr.language)
                                 .changed()
@@ -1702,20 +2331,18 @@ let hint = if *minutes == 0 {
                             touch!(self);
                         }
                         ui.end_row();
-                    });
+            });
+        });
 
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new("云端 ASR（OpenAI 兼容 /v1/audio/transcriptions）").strong());
-                egui::Grid::new("g_asr_cloud")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "云端 ASR（OpenAI 兼容 /v1/audio/transcriptions）", |ui| {
+            form_grid("g_asr_cloud").show(ui, |ui| {
                         ui.label("服务地址");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.cfg.asr.cloud.base_url)
-                                        .desired_width(320.0)
+                                        .desired_width(field_w(ui, 320.0))
                                         .hint_text("https://api.example.com/v1"),
                                 )
                                 .changed()
@@ -1726,11 +2353,11 @@ let hint = if *minutes == 0 {
                         ui.end_row();
 
                         ui.label("API Key");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.cfg.asr.cloud.api_key)
-                                        .desired_width(320.0)
+                                        .desired_width(field_w(ui, 320.0))
                                         .password(!self.show_keys),
                                 )
                                 .changed()
@@ -1745,7 +2372,7 @@ let hint = if *minutes == 0 {
                         if ui
                             .add(
                                 egui::TextEdit::singleline(&mut self.cfg.asr.cloud.model)
-                                    .desired_width(320.0),
+                                    .desired_width(field_w(ui, 320.0)),
                             )
                             .changed()
                         {
@@ -1761,22 +2388,21 @@ let hint = if *minutes == 0 {
                             touch!(self);
                         }
                         ui.end_row();
-                    });
-                ui.weak("云端不可用时自动回退本地（需本地模型就绪）");
             });
+            ui.add_space(GAP_ROW);
+            ui.weak("云端不可用时自动回退本地（需本地模型就绪）");
+        });
     }
 
-    fn section_polish(&mut self, ui: &mut egui::Ui) {
-        let resp = egui::CollapsingHeader::new("文本整理").show(ui, |ui| {
-            egui::Grid::new("g_polish")
-                .num_columns(2)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
+    /// 文本整理：档位 + 后端参数
+    fn page_polish(&mut self, ui: &mut egui::Ui) {
+        group_frame(ui, "整理档位", |ui| {
+            form_grid("g_polish").show(ui, |ui| {
                     ui.label("档位");
                     let cur = self.cfg.polish.tier();
                     let mut sel = cur;
                     egui::ComboBox::from_id_salt("ptier")
-                        .width(220.0)
+                        .width(field_w(ui, 220.0))
                         .selected_text(crate::config::Polish::tier_label(cur))
                         .show_ui(ui, |ui| {
                             for t in tray::POLISH_TIERS {
@@ -1788,20 +2414,20 @@ let hint = if *minutes == 0 {
                         touch!(self);
                     }
                     ui.end_row();
-                });
+            });
+        });
 
-            if self.cfg.polish.provider == "local" {
-                self.subsection_polish_local(ui);
-            } else {
-                egui::Grid::new("g_polish_cloud")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
+        ui.add_space(GAP_GROUP);
+        if self.cfg.polish.provider == "local" {
+            self.subsection_polish_local(ui);
+        } else {
+            group_frame(ui, "云端整理后端", |ui| {
+                form_grid("g_polish_cloud").show(ui, |ui| {
                         ui.label("服务地址");
                         if ui
                             .add(
                                 egui::TextEdit::singleline(&mut self.cfg.polish.base_url)
-                                    .desired_width(320.0)
+                                    .desired_width(field_w(ui, 320.0))
                                     .hint_text("https://api.example.com/v1"),
                             )
                             .changed()
@@ -1814,7 +2440,7 @@ let hint = if *minutes == 0 {
                         if ui
                             .add(
                                 egui::TextEdit::singleline(&mut self.cfg.polish.api_key)
-                                    .desired_width(320.0)
+                                    .desired_width(field_w(ui, 320.0))
                                     .password(!self.show_keys),
                             )
                             .changed()
@@ -1827,7 +2453,7 @@ let hint = if *minutes == 0 {
                         if ui
                             .add(
                                 egui::TextEdit::singleline(&mut self.cfg.polish.model)
-                                    .desired_width(320.0),
+                                    .desired_width(field_w(ui, 320.0)),
                             )
                             .changed()
                         {
@@ -1843,27 +2469,24 @@ let hint = if *minutes == 0 {
                             touch!(self);
                         }
                         ui.end_row();
-                    });
-            }
-            ui.weak("失败或超时会自动回退到 ASR 原文");
-        });
-        self.probe_note("hdr_polish", resp.header_response.rect);
+                });
+                ui.add_space(GAP_ROW);
+                ui.weak("失败或超时会自动回退到 ASR 原文");
+            });
+        }
     }
 
+    /// 本地 llama-server（懒加载）：路径 / 端口 / GPU / 超时 / 状态
     fn subsection_polish_local(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("本地大模型（llama-server，懒加载）").strong());
-        egui::Grid::new("g_polish_local")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
+        group_frame(ui, "本地大模型（llama-server，懒加载）", |ui| {
+            form_grid("g_polish_local").show(ui, |ui| {
                 let l = &mut self.cfg.polish.local;
                 ui.label("llama-server");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut l.exe)
-                                .desired_width(300.0)
+                                .desired_width(field_w(ui, 300.0))
                                 .hint_text("llama-server.exe"),
                         )
                         .changed()
@@ -1877,11 +2500,11 @@ let hint = if *minutes == 0 {
                 ui.end_row();
 
                 ui.label("GGUF 模型");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut l.model)
-                                .desired_width(300.0)
+                                .desired_width(field_w(ui, 300.0))
                                 .hint_text("*.gguf"),
                         )
                         .changed()
@@ -1904,7 +2527,7 @@ let hint = if *minutes == 0 {
                 ui.end_row();
 
                 ui.label("GPU 层数（ngl）");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(egui::DragValue::new(&mut l.ngl).range(0..=999))
                         .changed()
@@ -1971,7 +2594,7 @@ let hint = if *minutes == 0 {
                 ui.end_row();
 
                 ui.label("状态");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let (color, text) = match &self.llm_state {
                         LlmState::Unknown => (egui::Color32::GRAY, "未启动".to_string()),
                         LlmState::Starting => {
@@ -2003,123 +2626,131 @@ let hint = if *minutes == 0 {
                 });
                 ui.end_row();
             });
-        let log = self.paths.logs_dir().join("llama_server.log");
-        ui.weak(format!("日志：{}", log.display()));
+            ui.add_space(GAP_ROW);
+            let log = self.paths.logs_dir().join("llama_server.log");
+            ui.weak(format!("日志：{}", log.display()));
+        });
     }
 
-    fn section_rime(&mut self, ui: &mut egui::Ui) {
-        let hdr = egui::CollapsingHeader::new("输入法（Rime 二合一）").default_open(self.wizard);
-        let resp = hdr.show(ui, |ui| {
-            let info = self.rime_info.clone();
-            let res_dir = self.paths.resources_dir(&self.cfg.rime);
-            let res_ok = res_dir.join("rime").join("schemes").is_dir();
+    /// 输入法（Rime）：安装状态 / 主力语言 / 部署与生效 / 低频入口
+    fn page_rime(&mut self, ui: &mut egui::Ui) {
+        let info = self.rime_info.clone();
+        let res_dir = self.paths.resources_dir(&self.cfg.rime);
+        let res_ok = res_dir.join("rime").join("schemes").is_dir();
 
-            if self.wizard {
-                ui.colored_label(
-                    egui::Color32::from_rgb(60, 140, 220),
-                    "首次使用：选一种主力语言 → 点「立即部署」，装完即可用键盘打该语言（语音侧不受影响）",
-                );
-                ui.add_space(4.0);
-            }
+        if self.wizard {
+            ui.colored_label(
+                egui::Color32::from_rgb(60, 140, 220),
+                "首次使用：选一种主力语言 → 点「立即部署」，装完即可用键盘打该语言（语音侧不受影响）",
+            );
+            ui.add_space(GAP_ROW);
+        }
 
-            egui::Grid::new("g_rime")
-                .num_columns(2)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label("倾听输入法");
-                    ui.horizontal(|ui| {
-                        if info.installed {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(60, 180, 100),
-                                format!("已安装 {}", info.version),
-                            );
-                        } else {
-                            ui.colored_label(egui::Color32::from_rgb(230, 160, 40), "未安装");
-                        }
-                        if ui.button("重新检测").clicked() {
-                            self.rime_info = crate::rime::detect(&self.cfg.rime.user_dir);
-                        }
-                    });
-                    ui.end_row();
-
-                    ui.label("用户目录");
-                    ui.horizontal(|ui| {
-                        ui.label(info.user_dir.display().to_string());
-                        if ui.button("打开").clicked() {
-                            crate::open_path(&info.user_dir);
-                        }
-                    });
-                    ui.end_row();
-
-                    ui.label("资源");
-                    ui.horizontal(|ui| {
-                        if res_ok {
-                            ui.colored_label(egui::Color32::from_rgb(60, 180, 100), "已就绪");
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(220, 90, 90),
-                                "缺失（跑 installer\\fetch_resources.ps1）",
-                            );
-                        }
-                        ui.weak(res_dir.display().to_string());
-                    });
-                    ui.end_row();
-
-                    ui.label("主力语言");
-                    let mut lang = self.cfg.rime.primary_lang.clone();
-                    egui::ComboBox::from_id_salt("rime_lang")
-                        .width(180.0)
-                        .selected_text(crate::rime::schemes::Lang::from_str(&lang).label())
-                        .show_ui(ui, |ui| {
-                            for l in crate::rime::schemes::Lang::all() {
-                                let enabled = l != crate::rime::schemes::Lang::Fr;
-                                ui.add_enabled_ui(enabled, |ui| {
-                                    ui.selectable_value(&mut lang, l.as_str().to_string(), l.label());
-                                });
-                            }
-                        });
-                    if lang != self.cfg.rime.primary_lang {
-                        self.cfg.rime.primary_lang = lang;
-                        touch!(self);
+        group_frame(ui, "安装状态与主力语言", |ui| {
+            form_grid("g_rime").show(ui, |ui| {
+                ui.label("倾听输入法");
+                ui.horizontal_wrapped(|ui| {
+                    if info.installed {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(60, 180, 100),
+                            format!("已安装 {}", info.version),
+                        );
+                    } else {
+                        ui.colored_label(egui::Color32::from_rgb(230, 160, 40), "未安装");
                     }
-                    ui.end_row();
-
-                    ui.label("英文方案");
-                    if ui
-                        .checkbox(&mut self.cfg.rime.english_mixed, "一并放进方案列表（F4 可切）")
-                        .changed()
-                    {
-                        touch!(self);
+                    if ui.button("重新检测").clicked() {
+                        self.rime_info = crate::rime::detect(&self.cfg.rime.user_dir);
                     }
-                    ui.end_row();
-
-                    ui.label("中文简繁");
-                    if ui
-                        .checkbox(&mut self.cfg.rime.zh_trad, "默认繁体（Ctrl+Shift+4 可切）")
-                        .changed()
-                    {
-                        touch!(self);
-                    }
-                    ui.end_row();
-
-                    ui.label("语法模型");
-                    ui.horizontal(|ui| {
-                        if ui
-                            .checkbox(&mut self.cfg.rime.grammar, "万象 LMDG（中文，打长句更顺）")
-                            .changed()
-                        {
-                            touch!(self);
-                        }
-                    });
-                    ui.end_row();
                 });
+                ui.end_row();
 
+                ui.label("用户目录");
+                // 路径很长且没有空格（egui 只能按空白换行）→ 单独一行，按钮放前面，
+                // 窄窗口下宁可路径换行也不要把它顶出可视区
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("打开").clicked() {
+                        crate::open_path(&info.user_dir);
+                    }
+                    ui.weak(info.user_dir.display().to_string());
+                });
+                ui.end_row();
+
+                ui.label("资源");
+                ui.horizontal_wrapped(|ui| {
+                    if res_ok {
+                        ui.colored_label(egui::Color32::from_rgb(60, 180, 100), "已就绪");
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 90, 90),
+                            "缺失（跑 installer\\fetch_resources.ps1）",
+                        );
+                    }
+                    ui.weak(res_dir.display().to_string());
+                });
+                ui.end_row();
+
+                ui.label("主力语言");
+                let mut lang = self.cfg.rime.primary_lang.clone();
+                egui::ComboBox::from_id_salt("rime_lang")
+                    .width(field_w(ui, 180.0))
+                    .selected_text(crate::rime::schemes::Lang::from_str(&lang).label())
+                    .show_ui(ui, |ui| {
+                        for l in crate::rime::schemes::Lang::all() {
+                            let enabled = l != crate::rime::schemes::Lang::Fr;
+                            ui.add_enabled_ui(enabled, |ui| {
+                                ui.selectable_value(&mut lang, l.as_str().to_string(), l.label());
+                            });
+                        }
+                    });
+                if lang != self.cfg.rime.primary_lang {
+                    self.cfg.rime.primary_lang = lang;
+                    touch!(self);
+                }
+                ui.end_row();
+
+                ui.label("英文方案");
+                if ui
+                    .checkbox(&mut self.cfg.rime.english_mixed, "一并放进方案列表（F4 可切）")
+                    .changed()
+                {
+                    touch!(self);
+                }
+                ui.end_row();
+
+                ui.label("中文简繁");
+                if ui
+                    .checkbox(
+                        &mut self.cfg.rime.zh_trad,
+                        "繁体输出（部署期生效；运行中不再提供快捷键，避免误切）",
+                    )
+                    .changed()
+                {
+                    touch!(self);
+                }
+                ui.end_row();
+
+                ui.label("语法模型");
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .checkbox(&mut self.cfg.rime.grammar, "万象 LMDG（中文，打长句更顺）")
+                        .changed()
+                    {
+                        touch!(self);
+                    }
+                });
+                ui.end_row();
+            });
+            ui.add_space(GAP_ROW);
+            ui.weak("语言 / 简繁 / 语法模型是**方案结构**，改动后要重新部署一次才生效");
+        });
+
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "部署与生效", |ui| {
             let (running, msg, done, ok) = {
                 let g = self.rime_state.lock().unwrap();
                 (g.running, g.msg.clone(), g.done, g.ok)
             };
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let label = if info.installed {
                     "⬇ 立即部署（铺方案 + 编译词库）"
                 } else {
@@ -2134,9 +2765,6 @@ let hint = if *minutes == 0 {
                 if ui.button("打开资源目录").clicked() {
                     crate::open_path(&res_dir);
                 }
-                if self.dirty {
-                    ui.weak("（设置改动即时生效；只有方案/钩子这类结构变更需要重新部署）");
-                }
             });
             if running {
                 ui.add(egui::ProgressBar::new(0.0).animate(true).text(&msg));
@@ -2147,292 +2775,317 @@ let hint = if *minutes == 0 {
                     ui.colored_label(egui::Color32::from_rgb(220, 90, 90), &msg);
                 }
             }
+
+            // ---- 打字侧「即时生效」通道自检（2026-11-05）----
+            //
+            // 只写 listen_hotwords.txt 是不够的：WeaselServer 把 user_dict 缓存在**进程内**
+            // （librime `UserDictionaryComponent::db_pool_`），文件改了也不会重读，
+            // 要等重启/重新部署。所以额外挂一个 lua 翻译器（每次换输入框都按最新文件出候选），
+            // 这里显示它到底铺没铺上 —— 没铺时明确告诉用户「部署一次」。
+            //
+            // 注意：热词表 / lua 翻译器**只在中文（rime_ice）方案上挂**
+            // （见 `rime::write_configs` 的 `use_terms`）。主力语言是英/日时这行不该黄灯，
+            // 否则用户点一百次部署也不会变绿（2026-11-05 审查）。
+            let zh = matches!(
+                crate::rime::schemes::Lang::from_str(&self.cfg.rime.primary_lang),
+                crate::rime::schemes::Lang::Zh
+            );
+            if zh {
+                let lua_ok = info.user_dir.join(crate::rime::PHRASES_LUA).is_file();
+                let hook_ok = std::fs::read_to_string(info.user_dir.join("rime_ice.custom.yaml"))
+                    .map(|s| s.contains("lua_translator@*listen_phrases"))
+                    .unwrap_or(false);
+                let live = lua_ok && hook_ok;
+                ui.add_space(GAP_ROW);
+                ui.horizontal_wrapped(|ui| {
+                    if live {
+                        ui.colored_label(OK_GREEN, "打字侧：即时生效通道已就绪");
+                    } else if info.installed {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(230, 160, 40),
+                            "打字侧：还差一次部署（部署后可「改完立刻出候选」）",
+                        );
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(230, 160, 40),
+                            "打字侧：未安装输入法",
+                        );
+                    }
+                });
+                ui.weak(if live {
+                    "改快捷输入 / 热词后不用再部署：换一个输入框（新会话）就是新候选；\
+                     本行状态来自 lua\\listen_phrases.lua 与 rime_ice.custom.yaml 的 patch"
+                } else {
+                    "点上面的「立即部署」一次即可：之后加词条只写文件，不再需要 UAC 部署"
+                });
+            } else {
+                ui.add_space(GAP_ROW);
+                ui.weak("打字侧热词表只在中文方案（rime_ice）上挂；主力语言不是中文时这行不适用");
+            }
+
             if !self.cfg.rime.last_deploy.is_empty() {
+                ui.add_space(GAP_ROW);
                 ui.collapsing("最近一次部署日志", |ui| {
                     ui.small(&self.cfg.rime.last_deploy);
                 });
             }
-            // 低频入口（任务4a：原右键托盘菜单项移入，托盘只留高频项）
-            if info.installed {
-                ui.collapsing("更多（低频设置）", |ui| {
-                    let deployer = info
-                        .deployer
-                        .clone()
-                        .or_else(|| info.install_dir.clone().map(|d| d.join("WeaselDeployer.exe")));
-                    ui.horizontal(|ui| {
+        });
+
+        // 低频入口（任务4a：原右键托盘菜单项移入，托盘只留高频项）
+        if info.installed {
+            ui.add_space(GAP_GROUP);
+            group_frame(ui, "更多（低频设置）", |ui| {
+                let deployer = info
+                    .deployer
+                    .clone()
+                    .or_else(|| info.install_dir.clone().map(|d| d.join("WeaselDeployer.exe")));
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button("方案选单设定")
+                        .on_hover_text("原托盘「输入法设定」：方案选单 / 界面风格 / 词典管理")
+                        .clicked()
+                    {
+                        if let Some(p) = &deployer {
+                            crate::launch_exe(p, &[]);
+                        }
+                    }
+                    if ui.button("用户词典管理").clicked() {
+                        if let Some(p) = &deployer {
+                            crate::launch_exe(p, &["/dict"]);
+                        }
+                    }
+                    if ui.button("用户资料同步").clicked() {
+                        if let Some(p) = &deployer {
+                            crate::launch_exe(p, &["/sync"]);
+                        }
+                    }
+                    if let Some(dir) = info.install_dir.clone() {
                         if ui
-                            .button("方案选单设定")
-                            .on_hover_text("原托盘「输入法设定」：方案选单 / 界面风格 / 词典管理")
+                            .button("安装选项")
+                            .on_hover_text("倾听输入法安装选项（安装 / 卸载 / 用户目录）")
                             .clicked()
                         {
-                            if let Some(p) = &deployer {
-                                crate::launch_exe(p, &[]);
-                            }
+                            crate::launch_exe(&dir.join("WeaselSetup.exe"), &[]);
                         }
-                        if ui.button("用户词典管理").clicked() {
-                            if let Some(p) = &deployer {
-                                crate::launch_exe(p, &["/dict"]);
-                            }
-                        }
-                        if ui.button("用户资料同步").clicked() {
-                            if let Some(p) = &deployer {
-                                crate::launch_exe(p, &["/sync"]);
-                            }
-                        }
-                        if let Some(dir) = info.install_dir.clone() {
-                            if ui
-                                .button("安装选项")
-                                .on_hover_text("倾听输入法安装选项（安装 / 卸载 / 用户目录）")
-                                .clicked()
-                            {
-                                crate::launch_exe(&dir.join("WeaselSetup.exe"), &[]);
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        if let Some(dir) = info.install_dir.clone() {
-                            if ui.button("程序文件夹").clicked() {
-                                crate::open_path(&dir);
-                            }
-                        }
-                        if ui.button("日志文件夹").clicked() {
-                            let log = std::env::temp_dir().join("rime.weasel");
-                            let _ = std::fs::create_dir_all(&log);
-                            crate::open_path(&log);
-                        }
-                        if ui
-                            .button("帮助文档")
-                            .on_hover_text("rime.im 官方文档")
-                            .clicked()
-                        {
-                            crate::open_path(std::path::Path::new("https://rime.im/docs/"));
-                        }
-                        if ui
-                            .button("参加讨论")
-                            .on_hover_text("rime.im 社区")
-                            .clicked()
-                        {
-                            crate::open_path(std::path::Path::new("https://rime.im/discuss/"));
-                        }
-                    });
+                    }
                 });
-            }
-            ui.weak("部署在后台进行，首次编译大词库（日文 94MB）可能要几分钟；期间可正常用语音输入");
-        });
-        self.probe_note("hdr_rime", resp.header_response.rect);
-    }
-
-    /// 快捷输入（独立分区，2026-10-21：固定显示在最上方，不受折叠状态影响）
-    fn section_quick_input(&mut self, ui: &mut egui::Ui) {
-        // ================= 快捷输入（固定第一块，2026-10-21 用户要求） =================
-        if !self.qe_loaded {
-            self.qe_loaded = true;
-            self.qe_terms =
-                crate::hotwords::read_pack(&self.cfg, &self.paths, crate::hotwords::PHRASES);
-        tracing::info!("[快捷输入] 区块已渲染（已存 {} 条）", self.qe_terms.len());
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.heading("快捷输入");
-            ui.weak("打个短码 → 直接出你要的整段文本（快递地址、手机号、常用语…）");
-        });
-        ui.horizontal(|ui| {
-            ui.label("快捷键");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.hw_new_code)
-                    .desired_width(110.0)
-                    .hint_text("gds"),
-            );
-            ui.label("备注");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.hw_new_note)
-                    .desired_width(200.0)
-                    .hint_text("快递地址（只给自己看）"),
-            );
-        });
-        ui.label("词语 / 文本（上屏的完整内容，长度不限）");
-        ui.add(
-            egui::TextEdit::multiline(&mut self.hw_new_text)
-                .desired_width(f32::INFINITY)
-                .desired_rows(3)
-                .hint_text("广东省深圳市南山区科技园南路 1 号 3 栋 502"),
-        );
-        let code_ok = {
-            let c = self.hw_new_code.trim().to_lowercase();
-            c.len() >= 2 && c.chars().all(|ch| ch.is_ascii_lowercase())
-        };
-        let text_ok = !self.hw_new_text.trim().is_empty();
-        ui.horizontal(|ui| {
-            let btn = ui.add_enabled(code_ok && text_ok, egui::Button::new("＋ 添加 / 更新"));
-            if btn.clicked() {
-                let code = self.hw_new_code.trim().to_lowercase();
-                let text = self.hw_new_text.trim().to_string();
-                let note = self.hw_new_note.trim().to_string();
-                if let Some(t) = self.qe_terms.iter_mut().find(|t| t.code == code) {
-                    t.text = text;
-                    t.note = note;
-                } else {
-                    self.qe_terms.push(crate::hotwords::Term {
-                        text,
-                        code,
-                        category: "快捷输入".into(),
-                        weight: 90,
-                        rank: 0,
-                        note,
-                    });
-                }
-                self.hw_new_code.clear();
-                self.hw_new_text.clear();
-                self.hw_new_note.clear();
-                self.qe_status = "已加入列表，点「保存到文件」生效".into();
-            }
-            if ui.button("清空表单").clicked() {
-                self.hw_new_code.clear();
-                self.hw_new_text.clear();
-                self.hw_new_note.clear();
-            }
-            if !code_ok && !self.hw_new_code.trim().is_empty() {
-                ui.colored_label(
-                    egui::Color32::from_rgb(220, 120, 90),
-                    "快捷键只能用小写字母（≥2 位）",
-                );
-            }
-            ui.separator();
-            if ui.button("💾 保存到文件").clicked() {
-                self.qe_save();
-            }
-            if !self.qe_status.is_empty() {
-                ui.weak(&self.qe_status);
-            }
-        });
-        // 已有条目
-        let mut del: Option<usize> = None;
-        egui::ScrollArea::vertical()
-            .id_salt("qe_scroll")
-            .max_height(180.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Grid::new("qe_grid")
-                    .num_columns(4)
-                    .striped(true)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.strong("快捷键");
-                        ui.strong("词语");
-                        ui.strong("备注");
-                        ui.strong("");
-                        ui.end_row();
-                        if self.qe_terms.is_empty() {
-                            ui.weak("（还没有）在上面填一个试试：快捷键 gds，词语贴你的快递地址");
-                            ui.end_row();
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(dir) = info.install_dir.clone() {
+                        if ui.button("程序文件夹").clicked() {
+                            crate::open_path(&dir);
                         }
-                        for (i, t) in self.qe_terms.iter().enumerate() {
-                            ui.monospace(&t.code);
-                            let short: String = t.text.chars().take(42).collect();
-                            ui.label(short);
-                            ui.weak(&t.note);
-                            ui.horizontal(|ui| {
-                                if ui.small_button("编辑").clicked() {
-                                    self.hw_new_code = t.code.clone();
-                                    self.hw_new_text = t.text.clone();
-                                    self.hw_new_note = t.note.clone();
-                                }
-                                if ui.small_button("删除").clicked() {
-                                    del = Some(i);
-                                }
-                            });
-                            ui.end_row();
-                        }
-                    });
+                    }
+                    if ui.button("日志文件夹").clicked() {
+                        let log = std::env::temp_dir().join("rime.weasel");
+                        let _ = std::fs::create_dir_all(&log);
+                        crate::open_path(&log);
+                    }
+                    if ui
+                        .button("帮助文档")
+                        .on_hover_text("rime.im 官方文档")
+                        .clicked()
+                    {
+                        crate::open_path(std::path::Path::new("https://rime.im/docs/"));
+                    }
+                    if ui
+                        .button("参加讨论")
+                        .on_hover_text("rime.im 社区")
+                        .clicked()
+                    {
+                        crate::open_path(std::path::Path::new("https://rime.im/discuss/"));
+                    }
+                });
             });
-        if let Some(i) = del {
-            self.qe_terms.remove(i);
-            self.qe_status = "已删除，点「保存到文件」生效".into();
         }
-        ui.add_space(6.0);
-        ui.separator();
-        ui.weak("下面是其它词表（热词包 / 我打过的词），只影响打字候选与录音热词，与上面的快捷输入互不影响。");
-        ui.add_space(2.0);
+        ui.add_space(GAP_ROW);
+        ui.weak("部署在后台进行，首次编译大词库（日文 94MB）可能要几分钟；期间可正常用语音输入");
     }
-    /// 热词管理器：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
-    fn section_hotwords(&mut self, ui: &mut egui::Ui) {
 
-        self.section_quick_input(ui);
-
-        let hdr = egui::CollapsingHeader::new("热词 / 快捷输入（打字 + 录音）").default_open(true);
-        let resp = hdr.show(ui, |ui| {
-            ui.weak(
-                "一份词表同时驱动两条链：打字 → Rime 置顶候选（保存后切窗口即生效）；录音 → 识别热词偏置 + 术语保留",
-            );
-            if self.hw_pack.is_empty() {
-                self.hw_pack = self
-                    .cfg
-                    .hotwords
-                    .packs
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| crate::hotwords::KEYBOARD.to_string());
-                self.hw_reload();
+    /// 快捷输入：编码 → 任意文本（最高频的自定义项，单独成页）
+    ///
+    /// 2026-11-05：删掉两份重复编辑器（页首那一份 + 热词页里 phrases 那一份）。
+    /// 旧实现两个缓冲区（`qe_terms` / `hw_terms`）写同一个 `phrases.tsv`，
+    /// 谁后点保存谁覆盖谁 —— 加进去的条目会被另一份旧数据抹掉。
+    /// 现在只有一份数据（`hw_terms` + `hw_pack = phrases`），且**改动即时自动保存**。
+    fn page_quick_input(&mut self, ui: &mut egui::Ui) {
+        if self.hw_pack != crate::hotwords::PHRASES {
+            // 切页前先落盘上一个词表；写失败就别切（否则 reload 会清 dirty、缓冲区被覆盖）
+            if !self.hw_flush() {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 90, 90),
+                    format!("切到「快捷输入」前保存失败，先留在原词表：{}", self.hw_status),
+                );
+                ui.weak("处理完磁盘问题（目录只读/文件被占用）后再切页；改动还在缓冲区里，没有丢。");
+                return;
             }
+            self.hw_pack = crate::hotwords::PHRASES.to_string();
+            self.hw_reload();
+        }
 
-
-            // ---- 包选择 + 开关 ----
-            let names = self.hw_pack_names();
-            ui.horizontal(|ui| {
-                ui.label("词表");
-                let mut pick = self.hw_pack.clone();
-                egui::ComboBox::from_id_salt("hw_pack")
-                    .width(230.0)
-                    .selected_text(Self::pack_label(&pick))
-                    .show_ui(ui, |ui| {
-                        for n in &names {
-                            ui.selectable_value(&mut pick, n.clone(), Self::pack_label(n));
-                        }
-                    });
-                if pick != self.hw_pack {
-                    if self.hw_dirty {
-                        self.hw_status = "已放弃未保存的改动".into();
-                    }
-                    self.hw_pack = pick;
-                    self.hw_reload();
-                }
-                let is_user = crate::hotwords::is_typing_only(&self.hw_pack);
-                let mut on = if self.hw_pack == crate::hotwords::PHRASES {
-                    self.cfg.hotwords.phrases
-                } else if self.hw_pack == crate::hotwords::LEARNED {
-                    self.cfg.hotwords.learn
-                } else {
-                    self.cfg.hotwords.packs.iter().any(|p| p == &self.hw_pack)
-                };
-                let label = if is_user { "启用（只用于打字）" } else { "启用此包" };
-                if ui.checkbox(&mut on, label).changed() {
-                    ui.weak(format!("当前词表：{}", self.hw_pack_label()));
-            if self.hw_pack == crate::hotwords::PHRASES {
-                        self.cfg.hotwords.phrases = on;
-                    } else if self.hw_pack == crate::hotwords::LEARNED {
-                        self.cfg.hotwords.learn = on;
+        group_frame(ui, "新增 / 修改一条", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("快捷键");
+                let code = ui.add(
+                    egui::TextEdit::singleline(&mut self.hw_new_code)
+                        .desired_width(120.0)
+                        .hint_text("gds"),
+                );
+                self.probe_note("qe_code", code.rect);
+                ui.add_space(GAP_INLINE);
+                ui.label("备注");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.hw_new_note)
+                        .desired_width(field_w(ui, 220.0))
+                        .hint_text("快递地址（只给自己看）"),
+                );
+            });
+            ui.add_space(GAP_ROW);
+            ui.label("词语 / 文本（上屏的完整内容；**换行会被并成空格**，保存时同样处理）");
+            let body = ui.add(
+                egui::TextEdit::multiline(&mut self.hw_new_text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3)
+                    .hint_text("广东省深圳市南山区科技园南路 1 号 3 栋 502"),
+            );
+            self.probe_note("qe_text", body.rect);
+            if self.hw_new_text.contains(['\n', '\r', '\t']) {
+                ui.weak("（检测到换行/制表符：保存时会换成空格 —— 候选表是一行一条）");
+            }
+            let code_ok = {
+                let c = self.hw_new_code.trim().to_lowercase();
+                c.len() >= 2 && c.chars().all(|ch| ch.is_ascii_lowercase())
+            };
+            let text_ok = !self.hw_new_text.trim().is_empty();
+            ui.add_space(GAP_ROW);
+            ui.horizontal_wrapped(|ui| {
+                let btn = ui.add_enabled(code_ok && text_ok, egui::Button::new("＋ 添加 / 更新"));
+                self.probe_note("qe_add", btn.rect);
+                if btn.clicked() {
+                    let code = self.hw_new_code.trim().to_lowercase();
+                    // 与写盘口径一致：词条是一行一条，换行/制表符并成空格（否则内存与磁盘不一致）
+                    let text = self
+                        .hw_new_text
+                        .trim()
+                        .replace(['\n', '\r', '\t'], " ")
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let note = self.hw_new_note.trim().to_string();
+                    // 同快捷键视为「修改」：直接覆盖，不留重复行
+                    if let Some(t) = self.hw_terms.iter_mut().find(|t| t.code == code) {
+                        t.text = text;
+                        t.note = note;
                     } else {
-                        self.cfg.hotwords.packs.retain(|p| p != &self.hw_pack);
-                        if on {
-                            self.cfg.hotwords.packs.push(self.hw_pack.clone());
-                        }
+                        self.hw_terms.push(crate::hotwords::Term {
+                            text,
+                            code,
+                            category: "快捷输入".into(),
+                            weight: 90,
+                            rank: 0,
+                            note,
+                        });
                     }
-                    touch!(self);
+                    self.hw_new_code.clear();
+                    self.hw_new_text.clear();
+                    self.hw_new_note.clear();
+                    self.hw_mark_dirty();
                 }
-                let mut en = self.cfg.hotwords.enabled;
-                if ui.checkbox(&mut en, "总开关").changed() {
-                    self.cfg.hotwords.enabled = en;
-                    touch!(self);
+                if ui.button("清空表单").clicked() {
+                    self.hw_new_code.clear();
+                    self.hw_new_text.clear();
+                    self.hw_new_note.clear();
                 }
-                // 全局「快捷输入」展开（英文 / 直通状态兜底，方案 C）
+                if !code_ok && !self.hw_new_code.trim().is_empty() {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 120, 90),
+                        "快捷键只能用小写字母（≥2 位）",
+                    );
+                }
+            });
+        });
+
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "已保存的快捷输入", |ui| {
+            let mut del: Option<usize> = None;
+            // 横向可滚动：长地址 + 备注列在小窗口下会超出可视区
+            egui::ScrollArea::both()
+                .id_salt("qe_scroll")
+                .max_height(280.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("qe_grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing([GAP_LABEL, GAP_ROW])
+                        .min_row_height(ROW_H)
+                        .show(ui, |ui| {
+                            ui.strong("快捷键");
+                            ui.strong("词语");
+                            ui.strong("备注");
+                            ui.strong("");
+                            ui.end_row();
+                            if self.hw_terms.is_empty() {
+                                ui.weak("（还没有）在上面填一个试试：快捷键 gds，词语贴你的快递地址");
+                                ui.end_row();
+                            }
+                            for (i, t) in self.hw_terms.iter().enumerate() {
+                                ui.monospace(&t.code);
+                                let short: String = t.text.chars().take(42).collect();
+                                ui.label(short).on_hover_text(&t.text);
+                                ui.weak(&t.note);
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.small_button("编辑").clicked() {
+                                        self.hw_new_code = t.code.clone();
+                                        self.hw_new_text = t.text.clone();
+                                        self.hw_new_note = t.note.clone();
+                                        self.hw_pick = Some(i);
+                                    }
+                                    if ui.small_button("删除").clicked() {
+                                        del = Some(i);
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                });
+            if let Some(i) = del {
+                self.hw_terms.remove(i);
+                self.hw_pick = None;
+                self.hw_mark_dirty();
+            }
+        });
+
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "生效方式", |ui| {
+            form_grid("g_qe_flags").show(ui, |ui| {
+                ui.label("启用");
+                let mut on = self.cfg.hotwords.phrases;
+                if ui
+                    .checkbox(&mut on, "快捷输入参与打字候选（phrases 词表）")
+                    .on_hover_text(
+                        "关掉后：词条仍留在 phrases.tsv，但不会写进 Rime 候选表（打字打不出来）。\
+                         默认开。旧界面把这个开关放在词表下拉里，删掉重复编辑器后挪到这里。",
+                    )
+                    .changed()
+                {
+                    self.cfg.hotwords.phrases = on;
+                    touch!(self);
+                    // 开关本身要立刻反映到打字表，否则「打开了却还打不出来」
+                    if let Err(e) = crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
+                        tracing::warn!("[快捷输入] 开关后重写打字表失败: {e:#}");
+                    }
+                    let _ = self.cmd_tx.send(Cmd::ReloadHotwords);
+                }
+                ui.end_row();
+
+                ui.label("英文/直通状态");
                 let mut qe = self.cfg.hotwords.quick_expand;
                 if ui
-                    .checkbox(&mut qe, "英文/直通状态也展开快捷输入")
+                    .checkbox(&mut qe, "也展开快捷输入（键盘钩子兜底）")
                     .on_hover_text(
                         "中文状态由输入法候选表直接出第一项；英文（直通）状态没有候选窗，\
                          这里用键盘钩子兜底：敲完编码再按空格 → 退格 + 注入文本。\
-                         守卫：中文输入法活跃时自动沉默（靠 lua 心跳），不会重复出字。\
-                         ⚠️ 需要先部署一次（lua 心跳）；见到误触就关掉这项。",
+                         守卫：中文输入法活跃时自动沉默（靠 lua 心跳），不会重复出字。",
                     )
                     .changed()
                 {
@@ -2443,15 +3096,16 @@ let hint = if *minutes == 0 {
                         if qe { "打开" } else { "关闭" }
                     );
                 }
-                // 打字联想（custom_phrase/enable_completion）：打前缀也带出热词
+                ui.end_row();
+
+                ui.label("字词联想");
                 let mut pc = self.cfg.hotwords.prefix_completion;
                 if ui
-                    .checkbox(&mut pc, "字词联想")
+                    .checkbox(&mut pc, "打前缀也带出候选（如打 g 就出 gds 那条）")
                     .on_hover_text(
-                        "打开后**打前缀也能带出热词**：比如打 g 就能看到 GB / Gasket / GitHub…\
-                         （Rime 的 custom_phrase 的 enable_completion）。\
+                        "打开后打前缀也能带出热词（Rime custom_phrase 的 enable_completion）。\
                          代价：候选变多，单字母时首屏可能被热词占满。\
-                         ⚠️ 这是方案结构改动，改完要点「输入法 → 立即部署」（一次 UAC）才生效。",
+                         ⚠️ 这是方案结构改动，改完要去「输入法」页点一次「立即部署」。",
                     )
                     .changed()
                 {
@@ -2462,33 +3116,124 @@ let hint = if *minutes == 0 {
                         if pc { "打开" } else { "关闭" }
                     );
                 }
-                ui.separator();
-                ui.label("送识别模型热词上限");
+                ui.end_row();
+            });
+        });
+
+        ui.add_space(GAP_ROW);
+        ui.weak(
+            "改动即时生效（自动保存）：中文状态打「快捷键 + 空格」，第一候选就是这段文本；\
+             英文/直通状态由上面的键盘钩子兜底。",
+        );
+        if !self.hw_status.is_empty() {
+            ui.weak(&self.hw_status);
+        }
+    }
+    /// 热词表：一份词表同时驱动打字（Rime 置顶候选）与录音（ASR 热词偏置）
+    ///
+    /// 2026-11-05：删掉「💾 保存到文件」——词条改动和 config 一样自动保存
+    /// （`hw_mark_dirty` → 700ms 后 `hw_autosave_tick` → `hw_save`）。
+    /// 快捷输入（phrases）有独立页面，这里不再重复渲染同一个编辑器。
+    fn page_hotwords(&mut self, ui: &mut egui::Ui) {
+        if self.hw_pack.is_empty() || self.hw_pack == crate::hotwords::PHRASES {
+            // 从「快捷输入」页切过来：先把那边没到点的自动保存做掉，否则刚加的词条会被覆盖
+            if self.hw_flush() {
+                self.hw_pack = self
+                    .cfg
+                    .hotwords
+                    .packs
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| crate::hotwords::KEYBOARD.to_string());
+                self.hw_reload();
+            }
+        }
+
+        group_frame(ui, "词表与开关", |ui| {
+            form_grid("g_hw_top").show(ui, |ui| {
+                ui.label("词表");
+                ui.horizontal_wrapped(|ui| {
+                    let names = self.hw_pack_names();
+                    let mut pick = self.hw_pack.clone();
+                    egui::ComboBox::from_id_salt("hw_pack")
+                        .width(field_w(ui, 260.0))
+                        .selected_text(Self::pack_label(&pick))
+                        .show_ui(ui, |ui| {
+                            for n in &names {
+                                ui.selectable_value(&mut pick, n.clone(), Self::pack_label(n));
+                            }
+                        });
+                    if pick != self.hw_pack {
+                        // 切包前先把没到点的自动保存做掉；写失败就停在这里（别丢改动）
+                        if self.hw_flush() {
+                            self.hw_pack = pick;
+                            self.hw_reload();
+                        }
+                    }
+                });
+                ui.end_row();
+
+                ui.label("启用");
+                let mut on = if self.hw_pack == crate::hotwords::LEARNED {
+                    self.cfg.hotwords.learn
+                } else {
+                    self.cfg.hotwords.packs.iter().any(|p| p == &self.hw_pack)
+                };
                 if ui
-                    .add(egui::DragValue::new(&mut self.cfg.hotwords.asr_top_n).range(1..=200))
+                    .checkbox(&mut on, "此词表参与打字候选（+ 录音热词）")
                     .changed()
                 {
+                    if self.hw_pack == crate::hotwords::LEARNED {
+                        self.cfg.hotwords.learn = on;
+                    } else {
+                        self.cfg.hotwords.packs.retain(|p| p != &self.hw_pack);
+                        if on {
+                            self.cfg.hotwords.packs.push(self.hw_pack.clone());
+                        }
+                    }
                     touch!(self);
                 }
-                ui.weak("（FunASR-Nano 的 LLM 上下文有限，默认 30）");
-            });
+                ui.end_row();
 
+                ui.label("总开关");
+                let mut en = self.cfg.hotwords.enabled;
+                if ui
+                    .checkbox(&mut en, "热词功能总开关（关掉 = 两条链都不带热词）")
+                    .changed()
+                {
+                    self.cfg.hotwords.enabled = en;
+                    touch!(self);
+                }
+                ui.end_row();
+
+                ui.label("送识别模型");
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.cfg.hotwords.asr_top_n).range(1..=200),
+                    );
+                    ui.weak("条：FunASR-Nano 的 LLM 上下文有限，默认 30；打字侧不限条数");
+                });
+                ui.end_row();
+            });
+            ui.add_space(GAP_ROW);
+            ui.weak("录音侧：词表内容立即生效（写盘即重建热词）；打字侧：见页面底部的生效说明");
+        });
+
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "规模与「我的热词」", |ui| {
             let n = self.hw_terms.len();
             let ncode = self.hw_terms.iter().filter(|t| !t.code.trim().is_empty()).count();
             ui.weak(format!(
-                "本词表：{n} 条 · {ncode} 条带打字编码 · 仅录音 {} 条",
+                "当前词表：{} · {n} 条（{ncode} 条带打字编码 / {} 条仅录音）",
+                self.hw_pack_label(),
                 n - ncode
             ));
 
-            // ---- 全量统计（2026-10-21：用户以为「总共只有 118 条」——那只是当前选中的包）----
-            // 这里把「启用的内置包 + 我的热词 + 我打过的词」全算出来，并说清进识别模型的条数上限。
+            // 全量统计（2026-10-21：用户以为「总共只有 118 条」——那只是当前选中的包）
             let mut parts: Vec<String> = Vec::new();
             let mut total = 0usize;
             for name in self.hw_pack_names() {
-                if matches!(
-                    name.as_str(),
-                    x if x == crate::hotwords::PHRASES || x == crate::hotwords::LEARNED
-                ) {
+                if name == crate::hotwords::LEARNED || name == crate::hotwords::PHRASES {
                     continue;
                 }
                 if !self.cfg.hotwords.packs.iter().any(|p| p == &name) {
@@ -2510,53 +3255,41 @@ let hint = if *minutes == 0 {
                 parts.push(format!("我打过的词 {learned_n}"));
             }
             let merged = crate::hotwords::asr_terms(&self.cfg, &self.paths).len();
+            ui.add_space(GAP_ROW);
             ui.weak(format!(
                 "全量：{} = {total} 条（去重后 {merged} 条）· 送识别模型前 {} 条 · 打字侧不限条数",
                 parts.join(" + "),
                 self.cfg.hotwords.asr_top_n
             ));
+            ui.add_space(GAP_ROW);
             if ui
                 .button("✏ 编辑「我的热词」（条数不设上限，两条链都生效）")
                 .clicked()
+                && self.hw_flush()
             {
                 self.hw_pack = crate::hotwords::MINE.to_string();
                 self.hw_reload();
-                self.hw_status = "已切到「我的热词」：加多少条都行，保存后切窗口即生效".into();
             }
+            ui.weak("「我的热词」= 自己手工加的词，打字置顶 + 录音纠错都生效，加多少条都行");
+        });
 
-            // ---- 用户词学习（只对「我打过的词」有意义，但开关放这里常驻）----
-            let learning = self.hw_pack == crate::hotwords::LEARNED;
-            if learning {
+        // ---- 用户词学习（只在「我打过的词」这一包下显示操作）----
+        if self.hw_pack == crate::hotwords::LEARNED {
+            ui.add_space(GAP_GROUP);
+            group_frame(ui, "用户词学习", |ui| {
                 ui.weak(
                     "打字时你选过的词会自动记进这里，并置顶到第一位（同类机制：雾凇自带调频实测无效）",
                 );
-                ui.horizontal(|ui| {
+                ui.add_space(GAP_ROW);
+                ui.horizontal_wrapped(|ui| {
                     if ui.button("⟳ 立即导入新词").clicked() {
-                        match crate::learn::import_new(&self.cfg, &self.paths, false) {
-                            Ok(r) => {
-                                // 顺手写进打字侧（换个窗口即生效，不需要部署）
-                                let applied = crate::hotwords::apply_to_rime(&self.cfg, &self.paths)
-                                    .ok()
-                                    .flatten()
-                                    .map(|_| "，已写入打字侧")
-                                    .unwrap_or("");
-                                self.hw_status = if r.is_empty() {
-                                    format!("没有新词（词表 {} 条）{applied}", r.total)
-                                } else {
-                                    format!(
-                                        "导入完成：新词 {} 条 / 次数 +{} → 共 {} 条{applied}",
-                                        r.new_pairs, r.added_count, r.total
-                                    )
-                                };
-                            }
-                            Err(e) => self.hw_status = format!("导入失败: {e:#}"),
-                        }
-                        self.hw_reload();
+                        self.hw_learn_import(false);
                     }
                     if ui
                         .button("🗑 清空已学词")
                         .on_hover_text("清掉置顶的词（日志进度不动，打过的词不会又被导入回来）")
                         .clicked()
+                        && self.hw_flush() // 先落盘编辑，否则下面的重写会把它覆盖掉
                     {
                         match crate::learn::clear(&self.cfg, &self.paths) {
                             Ok(()) => self.hw_status = "已清空已学词".into(),
@@ -2566,80 +3299,84 @@ let hint = if *minutes == 0 {
                     }
                     if ui
                         .button("↺ 重新学习全部")
-                        .on_hover_text("忽略进度，把整份历史日志重新吃一遗（删过的词也会回来）")
+                        .on_hover_text("忽略进度，把整份历史日志重新吃一遍（删过的词也会回来）")
                         .clicked()
                     {
-                        match crate::learn::import_new(&self.cfg, &self.paths, true) {
-                            Ok(r) => {
-                                let applied = crate::hotwords::apply_to_rime(&self.cfg, &self.paths)
-                                    .ok()
-                                    .flatten()
-                                    .map(|_| "，已写入打字侧")
-                                    .unwrap_or("");
-                                self.hw_status = format!(
-                                    "全量重学：新词 {} 条 → 共 {} 条{applied}",
-                                    r.new_pairs, r.total
-                                )
-                            }
-                            Err(e) => self.hw_status = format!("重学失败: {e:#}"),
-                        }
-                        self.hw_reload();
+                        self.hw_learn_import(true);
                     }
-                    ui.separator();
-                    ui.label("最多置顶");
-                    if ui
-                        .add(egui::DragValue::new(&mut self.cfg.hotwords.learn_max).range(20..=2000))
-                        .changed()
-                    {
-                        touch!(self);
-                    }
-                    ui.label("条 · 攒够");
-                    if ui
-                        .add(egui::DragValue::new(&mut self.cfg.hotwords.learn_auto_deploy).range(0..=999))
-                        .on_hover_text("0 = 不自动写入，只能点「保存到文件」")
-                        .changed()
-                    {
-                        touch!(self);
-                    }
-                    ui.weak("个新词自动写进打字表（无需 UAC）");
                 });
+                ui.add_space(GAP_ROW);
+                form_grid("g_hw_learn").show(ui, |ui| {
+                    ui.label("最多置顶");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut self.cfg.hotwords.learn_max)
+                                    .range(20..=2000),
+                            )
+                            .changed()
+                        {
+                            touch!(self);
+                        }
+                        ui.weak("条（超过这个数不再置顶，文件本身按次数降序）");
+                    });
+                    ui.end_row();
+
+                    ui.label("自动写回阈值");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut self.cfg.hotwords.learn_auto_deploy)
+                                    .range(0..=999),
+                            )
+                            .on_hover_text("0 = 不自动写入（只在你手动点「立即导入新词」时写）")
+                            .changed()
+                        {
+                            touch!(self);
+                        }
+                        ui.weak("个新词自动写进打字表（无需 UAC）");
+                    });
+                    ui.end_row();
+                });
+                ui.add_space(GAP_ROW);
                 ui.weak(format!(
                     "日志已记 {} 条，其中 {} 条已导入",
                     crate::learn::log_lines(&self.cfg, &self.paths),
                     crate::learn::learned_terms(&self.cfg, &self.paths).len()
                 ));
-            }
+            });
+        }
 
-            // ---- 工具条 ----
-            ui.horizontal(|ui| {
+        // ---- 词条编辑 ----
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "词条编辑", |ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("过滤");
-                ui.add(egui::TextEdit::singleline(&mut self.hw_filter).desired_width(120.0));
+                ui.add(egui::TextEdit::singleline(&mut self.hw_filter).desired_width(field_w(ui, 160.0)));
+                ui.add_space(GAP_INLINE);
                 if ui.button("＋ 加词条").clicked() {
                     self.hw_terms.push(crate::hotwords::Term {
                         weight: 50,
                         category: "自定义".into(),
                         ..Default::default()
                     });
-                    self.hw_dirty = true;
+                    self.hw_mark_dirty();
                 }
                 if ui
-                    .add_enabled(self.hw_dirty, egui::Button::new("💾 保存到文件"))
+                    .button("↺ 重新载入")
+                    .on_hover_text("丢掉界面上的改动，重新从磁盘读这个词表")
                     .clicked()
                 {
-                    self.hw_save();
-                }
-                if ui.button("↺ 重新载入").clicked() {
                     self.hw_reload();
                 }
                 if crate::hotwords::builtin_body(&self.hw_pack).is_some() {
                     if self.hw_confirm_restore {
-                        if ui.button("确认恢复内置" ).clicked() {
+                        if ui.button("确认恢复内置").clicked() {
                             self.hw_terms = crate::hotwords::builtin_body(&self.hw_pack)
                                 .map(crate::hotwords::parse_tsv)
                                 .unwrap_or_default();
                             self.hw_confirm_restore = false;
-                            self.hw_dirty = true;
-                            self.hw_status = "已载入内置副本，点「保存到文件」生效".into();
+                            self.hw_mark_dirty();
                         }
                     } else if ui.button("恢复内置词表").clicked() {
                         self.hw_confirm_restore = true;
@@ -2650,156 +3387,23 @@ let hint = if *minutes == 0 {
                     crate::open_path(&d);
                 }
             });
-            ui.weak(format!("当前词表：{}", self.hw_pack_label()));
-            if self.hw_pack == crate::hotwords::PHRASES {
-                ui.weak(
-                    "快捷输入：编码只能小写字母（如 gds / yunghg），打完按空格 → 第一候选就是「词条」那段文本（长度不限，可随时改）。只用于打字，不进录音热词。",
-                );
-            } else if self.hw_pack == crate::hotwords::LEARNED {
-                ui.weak(
-                    "自动学习：只收「词语」（汉字 ≤6 个、无标点空格），按使用次数排序 —— 反复选的那个词会自动跑到第一候选（10 秒内生效，切窗口即可）。",
-                );
-            }
-            if !self.hw_status.is_empty() {
-                ui.weak(self.hw_status.clone());
-            }
+            ui.add_space(GAP_ROW);
 
-            // ---- 快捷输入：三栏表单（快捷键 / 词语 / 备注），2026-10-21 用户要求 ----
-            if self.hw_pack == crate::hotwords::PHRASES {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("快捷键");
-                    let code = ui.add(
-                        egui::TextEdit::singleline(&mut self.hw_new_code)
-                            .desired_width(110.0)
-                            .hint_text("gds"),
-                    );
-                    self.probe_note("qe_code", code.rect);
-                    ui.label("备注");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.hw_new_note)
-                            .desired_width(220.0)
-                            .hint_text("快递地址"),
-                    );
-                });
-                ui.label("词语（要上屏的完整文本，长度不限）");
-                let body = ui.add(
-                    egui::TextEdit::multiline(&mut self.hw_new_text)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(4)
-                        .hint_text("广东省深圳市南山区科技园南路 1 号 3 栋 502"),
-                );
-                self.probe_note("qe_text", body.rect);
-
-                let code_ok = {
-                    let c = self.hw_new_code.trim().to_lowercase();
-                    c.len() >= 2 && c.chars().all(|ch| ch.is_ascii_lowercase())
-                };
-                let text_ok = !self.hw_new_text.trim().is_empty();
-                ui.horizontal(|ui| {
-                    let can_add = code_ok && text_ok;
-                    let btn = ui.add_enabled(can_add, egui::Button::new("＋ 添加 / 更新"));
-                    self.probe_note("qe_add", btn.rect);
-                    if btn.clicked() {
-                        let code = self.hw_new_code.trim().to_lowercase();
-                        let text = self.hw_new_text.trim().to_string();
-                        let note = self.hw_new_note.trim().to_string();
-                        // 同快捷键视为「修改」：直接覆盖，不留重复行
-                        if let Some(t) = self.hw_terms.iter_mut().find(|t| t.code == code) {
-                            t.text = text;
-                            t.note = note;
-                        } else {
-                            self.hw_terms.push(crate::hotwords::Term {
-                                text,
-                                code,
-                                category: "快捷输入".into(),
-                                weight: 90,
-                                rank: 0,
-                                note,
-                            });
-                        }
-                        self.hw_dirty = true;
-                        self.hw_new_code.clear();
-                        self.hw_new_text.clear();
-                        self.hw_new_note.clear();
-                        self.hw_pick = None;
-                    }
-                    if ui.button("清空表单").clicked() {
-                        self.hw_new_code.clear();
-                        self.hw_new_text.clear();
-                        self.hw_new_note.clear();
-                        self.hw_pick = None;
-                    }
-                    if !code_ok && !self.hw_new_code.trim().is_empty() {
-                        ui.colored_label(egui::Color32::from_rgb(220, 120, 90), "快捷键只能用小写字母（≥2 位）");
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(self.hw_dirty, egui::Button::new("💾 保存到文件"))
-                        .clicked()
-                    {
-                        self.hw_save();
-                    }
-                });
-                ui.weak("添加后点「保存到文件」→ 立刻写进打字表；中文状态打快捷键 + 空格就是第一候选，英文状态由全局展开兜底。");
-
-                // 已有条目列表（快捷键 / 词语 / 备注 / 操作）
-                let mut del: Option<usize> = None;
-                egui::ScrollArea::vertical()
-                    .id_salt("qe_scroll")
-                    .max_height(220.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        egui::Grid::new("qe_grid")
-                            .num_columns(4)
-                            .striped(true)
-                            .spacing([10.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.strong("快捷键");
-                                ui.strong("词语");
-                                ui.strong("备注");
-                                ui.strong("");
-                                ui.end_row();
-                                for (i, t) in self.hw_terms.iter().enumerate() {
-                                    ui.monospace(&t.code);
-                                    let short: String = t.text.chars().take(40).collect();
-                                    ui.label(short);
-                                    ui.weak(&t.note);
-                                    ui.horizontal(|ui| {
-                                        if ui.small_button("编辑").clicked() {
-                                            self.hw_new_code = t.code.clone();
-                                            self.hw_new_text = t.text.clone();
-                                            self.hw_new_note = t.note.clone();
-                                            self.hw_pick = Some(i);
-                                        }
-                                        if ui.small_button("删除").clicked() {
-                                            del = Some(i);
-                                        }
-                                    });
-                                    ui.end_row();
-                                }
-                            });
-                    });
-                if let Some(i) = del {
-                    self.hw_terms.remove(i);
-                    self.hw_dirty = true;
-                    self.hw_pick = None;
-                }
-            } else {
-
-            // ---- 词条表格 ----
             let filter = self.hw_filter.trim().to_lowercase();
             let mut remove: Option<usize> = None;
             let mut changed = false;
-            egui::ScrollArea::vertical()
+            // 横向也允许滚动：6 列（词条/编码/类别/权重/说明/删除）在小窗口下比可视区宽，
+            // 纯纵向滚动会把右边几列（含删除按钮）裁掉。
+            egui::ScrollArea::both()
                 .id_salt("hw_scroll")
-                .max_height(300.0)
+                .max_height(360.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     egui::Grid::new("hw_grid")
                         .num_columns(6)
                         .striped(true)
-                        .spacing([8.0, 4.0])
+                        .spacing([GAP_INLINE, GAP_ROW])
+                        .min_row_height(ROW_H)
                         .show(ui, |ui| {
                             ui.strong("词条");
                             ui.strong("编码");
@@ -2819,14 +3423,14 @@ let hint = if *minutes == 0 {
                                 changed |= ui
                                     .add(
                                         egui::TextEdit::singleline(&mut t.text)
-                                            .desired_width(130.0),
+                                            .desired_width(150.0),
                                     )
                                     .changed();
                                 changed |= ui
                                     .add(
                                         egui::TextEdit::singleline(&mut t.code)
-                                            .desired_width(90.0)
-                                            .hint_text("小写拼音/缩写；空=仅录音"),
+                                            .desired_width(100.0)
+                                            .hint_text("小写字母；空=仅录音"),
                                     )
                                     .changed();
                                 changed |= ui
@@ -2856,37 +3460,54 @@ let hint = if *minutes == 0 {
                 changed = true;
             }
             if changed {
-                self.hw_dirty = true;
+                self.hw_mark_dirty();
             }
-
+            if self.hw_pack == crate::hotwords::LEARNED {
+                ui.add_space(GAP_ROW);
+                ui.weak(
+                    "自动学习：只收「词语」（汉字 ≤6 个、无标点空格），按使用次数排序 —— 反复选的那个词会自动跑到第一候选。",
+                );
             }
-
-            // ---- 生效 ----
-            ui.horizontal(|ui| {
-                ui.weak("改完先「保存到文件」，再让两端生效：");
-                ui.weak("录音侧立即生效（保存即写 config）；打字侧换个窗口即生效（内容改动无需重新部署）");
-            });
-            let (running, _, _, _) = {
-                let g = self.rime_state.lock().unwrap();
-                (g.running, g.done, g.ok, 0)
-            };
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        self.rime_info.installed && !running,
-                        egui::Button::new("立即重新部署（弹 UAC）"),
-                    )
-                    .on_hover_text("把词表铺给打字侧：写 listen_hotwords.txt + 重新编译词库")
-                    .clicked()
-                {
-                    self.start_rime_deploy(false);
-                }
-                if !self.rime_info.installed {
-                    ui.weak("（没装倾听输入法：打字侧要先去上面部署一次）");
-                }
-            });
+            if !self.hw_status.is_empty() {
+                ui.add_space(GAP_ROW);
+                ui.weak(self.hw_status.clone());
+            }
         });
-        self.probe_note("hdr_hotwords", resp.header_response.rect);
+
+        ui.add_space(GAP_ROW);
+        ui.weak(
+            "改动即时自动保存。打字侧要「改完立刻出候选」需要 lua 翻译器已铺好（「输入法」页有一次部署）——\
+             否则要等 WeaselServer 重启才会重读词表。",
+        );
+    }
+
+    /// 学习日志增量导入（按钮与自动导入共用）；`full` = 忽略进度重学全部
+    fn hw_learn_import(&mut self, full: bool) {
+        // 导入/重学会「从磁盘重读并重写」learned.tsv：先把没落盘的编辑写掉，否则会被覆盖
+        if !self.hw_flush() {
+            self.hw_status = format!("{}（未开始导入）", self.hw_status);
+            return;
+        }
+        match crate::learn::import_new(&self.cfg, &self.paths, full) {
+            Ok(r) => {
+                // 顺手写进打字侧（换输入框即生效，不需要部署）
+                let applied = crate::hotwords::apply_to_rime(&self.cfg, &self.paths)
+                    .ok()
+                    .flatten()
+                    .map(|_| "，已写入打字表")
+                    .unwrap_or("");
+                self.hw_status = if r.is_empty() {
+                    format!("没有新词（词表 {} 条）{applied}", r.total)
+                } else {
+                    format!(
+                        "导入完成：新词 {} 条 / 次数 +{} → 共 {} 条{applied}",
+                        r.new_pairs, r.added_count, r.total
+                    )
+                };
+            }
+            Err(e) => self.hw_status = format!("导入失败: {e:#}"),
+        }
+        self.hw_reload();
     }
 
     /// 可选的词表：我的词表（快捷输入 / 我打过的词）+ 内置包 + 用户目录里自己放的 *.tsv
@@ -2908,10 +3529,8 @@ let hint = if *minutes == 0 {
     }
 
     fn hw_pack_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = vec![
-            crate::hotwords::PHRASES.to_string(),
-            crate::hotwords::LEARNED.to_string(),
-        ];
+        // 快捷输入（phrases）有独立页面，不出现在这里的下拉里（避免两份编辑器写同一个文件）
+        let mut names: Vec<String> = vec![crate::hotwords::LEARNED.to_string()];
         for n in crate::hotwords::builtin_names() {
             if !names.iter().any(|x| x == n) {
                 names.push(n.to_string());
@@ -2923,6 +3542,9 @@ let hint = if *minutes == 0 {
                 let p = e.path();
                 if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("tsv")) {
                     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        if stem.eq_ignore_ascii_case(crate::hotwords::PHRASES) {
+                            continue;
+                        }
                         if !names.iter().any(|n| n == stem) {
                             names.push(stem.to_string());
                         }
@@ -2931,6 +3553,9 @@ let hint = if *minutes == 0 {
             }
         }
         for p in &self.cfg.hotwords.packs {
+            if p.eq_ignore_ascii_case(crate::hotwords::PHRASES) {
+                continue;
+            }
             if !names.contains(p) {
                 names.push(p.clone());
             }
@@ -2943,44 +3568,69 @@ let hint = if *minutes == 0 {
         self.hw_terms = crate::hotwords::read_pack(&self.cfg, &self.paths, &self.hw_pack);
         self.hw_filter.clear();
         self.hw_dirty = false;
+        self.hw_autosave_at = None;
         self.hw_confirm_restore = false;
         let path = crate::hotwords::pack_path(&self.cfg, &self.paths, &self.hw_pack);
         self.hw_status = format!("已载入 {} 条（{}）", self.hw_terms.len(), path.display());
     }
 
-    /// 写回 tsv + 让 config 变更立即生效（录音侧热词随配置热更新重建）
-    /// 保存「快捷输入」到 `hotwords\phrases.tsv` 并立刻写打字表
-    fn qe_save(&mut self) {
-        let path = crate::hotwords::pack_path(&self.cfg, &self.paths, crate::hotwords::PHRASES);
-        if let Some(d) = path.parent() {
-            let _ = std::fs::create_dir_all(d);
+    /// 词表改动：打脏标记 + 700ms 后自动写盘（连续改多行只写一次）
+    fn hw_mark_dirty(&mut self) {
+        self.hw_dirty = true;
+        self.hw_autosave_at = Some(Instant::now() + Duration::from_millis(700));
+    }
+
+    /// 每帧调用：词表到点就自动保存（与 config 的 `autosave_tick` 同一节奏）
+    fn hw_autosave_tick(&mut self, ctx: &egui::Context) {
+        let Some(at) = self.hw_autosave_at else { return };
+        let now = Instant::now();
+        if now < at {
+            ctx.request_repaint_after(at - now);
+            return;
         }
-        let body = crate::hotwords::render_tsv(crate::hotwords::PHRASES, &self.qe_terms);
-        match std::fs::write(&path, body) {
-            Ok(()) => {
-                let note = match crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
-                    Ok(Some(p)) => {
-                        tracing::info!("[快捷输入] 已重写打字表: {p}");
-                        "已保存并写入打字表（切窗口即生效）"
-                    }
-                    Ok(None) => "已保存（未检测到倾听输入法，跳过打字表）",
-                    Err(e) => {
-                        tracing::warn!("[快捷输入] 写打字表失败: {e:#}");
-                        "已保存，但写打字表失败（见日志）"
-                    }
-                };
-                self.qe_status = format!("{} 条 · {note}", self.qe_terms.len());
-                let _ = self.cmd_tx.send(Cmd::ReloadHotwords);
-                tracing::info!("[快捷输入] {}", self.qe_status);
-            }
-            Err(e) => self.qe_status = format!("保存失败: {e}"),
+        self.hw_autosave_at = None;
+        if self.hw_dirty && !self.hw_save() {
+            // 失败退避重试，别让「正在自动保存…」永远挂着（也说清为什么）
+            self.hw_autosave_at = Some(Instant::now() + Duration::from_secs(2));
+            ctx.request_repaint_after(Duration::from_secs(2));
         }
     }
-    fn hw_save(&mut self) {
+
+    /// 立刻落盘未到点的词表改动（切包 / 切页 / 关窗 / 重载前调用）
+    ///
+    /// 返回是否**已经安全**（没改动或写盘成功）。调用方必须先看返回值：
+    /// 失败还去切词表，`hw_reload()` 会把 dirty 清掉、缓冲区被磁盘版覆盖 = 静默丢改动。
+    fn hw_flush(&mut self) -> bool {
+        if !self.hw_dirty {
+            return true;
+        }
+        self.hw_autosave_at = None;
+        self.hw_save()
+    }
+
+    /// 退出/隐藏前把所有未到点的自动保存做掉（config + 词表）
+    ///
+    /// 为什么要有：自动保存都是「延迟 600/700ms 落盘」，直接点「退出程序」/托盘退出
+    /// 可能赶在定时器前面 → 刚改的那一下会丢。退出路径统一走这里。
+    fn flush_all(&mut self) {
+        if self.dirty {
+            self.autosave_at = None;
+            self.save_now();
+        }
+        let _ = self.hw_flush();
+    }
+
+    /// 写回 tsv + 立刻重写打字表 + 通知录音侧重建热词
+    ///
+    /// 2026-11-05：从「按钮触发」改成「自动保存触发」（`hw_autosave_tick` / `hw_flush`）。
+    /// 内容本身不需要部署；但打字侧要**真正刷新**还依赖 lua 翻译器（见「输入法」页的自检行）。
+    ///
+    /// 返回是否写盘成功（`hw_dirty` 只有成功才清）。
+    fn hw_save(&mut self) -> bool {
         let d = crate::hotwords::dir(&self.cfg, &self.paths);
         if let Err(e) = std::fs::create_dir_all(&d) {
             self.hw_status = format!("创建目录失败: {e}");
-            return;
+            return false;
         }
         let path = crate::hotwords::pack_path(&self.cfg, &self.paths, &self.hw_pack);
         // 「我打过的词」走带锁的写入（worker 每 30s 也会往同一个文件导入）
@@ -2993,15 +3643,13 @@ let hint = if *minutes == 0 {
         match res {
             Ok(()) => {
                 self.hw_dirty = false;
+                self.hw_autosave_at = None;
                 let ncode = self.hw_terms.iter().filter(|t| !t.code.trim().is_empty()).count();
-                // ★ 打字侧立刻重写 Rime 候选表（2026-10-21 修）：
-                // 旧实现只发 ReloadHotwords（录音/整理侧），打字侧要等「学习到 20 个新词」
-                // 才会被 tick_learn 顺手刷一次 —— 用户新加的「快捷输入」（快递地址 gds）
-                // 当场打字根本出不来，看起来像功能坏了。
+                // 打字侧立刻重写 Rime 候选表（2026-10-21 修；2026-11-05 改为自动保存触发）
                 let rime_note = match crate::hotwords::apply_to_rime(&self.cfg, &self.paths) {
                     Ok(Some(p)) => {
                         tracing::info!("[热词] 已重写打字表: {p}");
-                        "，已写入打字表（切窗口即生效）"
+                        "，已写入打字表"
                     }
                     Ok(None) => "（未检测到倾听输入法，跳过打字表）",
                     Err(e) => {
@@ -3010,28 +3658,31 @@ let hint = if *minutes == 0 {
                     }
                 };
                 self.hw_status = format!(
-                    "已保存 {} 条（{ncode} 条带打字编码）→ {}{rime_note}",
+                    "已自动保存 {} 条（{ncode} 条带打字编码）{rime_note}",
                     self.hw_terms.len(),
-                    path.display()
                 );
                 touch!(self); // 让自动保存把 config（启用包/上限）一并落盘
                 // 录音侧立即生效（tsv 改的是文件、config 没变，所以要显式通知）
                 let _ = self.cmd_tx.send(Cmd::ReloadHotwords);
                 tracing::info!("[热词] {}", self.hw_status);
+                true
             }
-            Err(e) => self.hw_status = format!("保存失败: {e:#}"),
+            Err(e) => {
+                self.hw_status = format!("保存失败（2 秒后自动重试）: {e:#}");
+                tracing::error!("[热词] {}", self.hw_status);
+                false
+            }
         }
     }
 
-    fn section_inject(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("注入").show(ui, |ui| {
-            egui::Grid::new("g_inject")
-                .num_columns(2)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
+    /// 注入：上屏方式
+    fn page_inject(&mut self, ui: &mut egui::Ui) {
+        group_frame(ui, "剪贴板上屏", |ui| {
+            form_grid("g_inject").show(ui, |ui| {
                     ui.label("注入后恢复剪贴板");
                     if ui
-                        .checkbox(&mut self.cfg.inject.restore_clipboard, "")
+                        .checkbox(&mut self.cfg.inject.restore_clipboard, "把原来的剪贴板内容写回去")
+                        .on_hover_text("关掉则注入的文本会留在剪贴板里")
                         .changed()
                     {
                         touch!(self);
@@ -3041,6 +3692,7 @@ let hint = if *minutes == 0 {
                     ui.label("写入后延迟（ms）");
                     if ui
                         .add(egui::DragValue::new(&mut self.cfg.inject.paste_delay_ms).range(0..=2000))
+                        .on_hover_text("写完剪贴板到触发 Ctrl+V 之间等多久；太短个别程序会粘不上")
                         .changed()
                     {
                         touch!(self);
@@ -3050,6 +3702,7 @@ let hint = if *minutes == 0 {
                     ui.label("恢复延迟（ms）");
                     if ui
                         .add(egui::DragValue::new(&mut self.cfg.inject.restore_delay_ms).range(0..=5000))
+                        .on_hover_text("粘贴后等多久再恢复原剪贴板；太长会让恢复慢")
                         .changed()
                     {
                         touch!(self);
@@ -3058,7 +3711,7 @@ let hint = if *minutes == 0 {
 
                     ui.label("Shift+热键 撤销换原文");
                     if ui
-                        .checkbox(&mut self.cfg.inject.raw_replace_undo, "")
+                        .checkbox(&mut self.cfg.inject.raw_replace_undo, "保留「撤销上一次粘贴再换原文」的能力")
                         .changed()
                     {
                         touch!(self);
@@ -3066,11 +3719,11 @@ let hint = if *minutes == 0 {
                     ui.end_row();
 
                     ui.label("分段间分隔符");
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui
                             .add(
                                 egui::TextEdit::singleline(&mut self.cfg.inject.chunk_separator)
-                                    .desired_width(60.0),
+                                    .desired_width(80.0),
                             )
                             .changed()
                         {
@@ -3079,67 +3732,35 @@ let hint = if *minutes == 0 {
                         ui.weak("聊天框建议用空格（换行可能直接发送消息）");
                     });
                     ui.end_row();
-                });
+            });
         });
+        ui.add_space(GAP_ROW);
+        ui.weak("改动即时生效并自动保存；管理员窗口受 UIPI 限制无法注入（系统限制）");
     }
 
-    /// 顶部「语音引擎」状态卡：状态点 + 总开关 + 摘要
-    /// 「链路状态」卡（2026-10-09）：8 环灯 + 总判 + 一键修复
+    /// 链路诊断：8 环灯 + 建议（总开关 / 一键修复已挪到顶部状态条，避免重复）
     ///
     /// 判级与文案全部来自 `chain::Chain::rows()`（与 `listen.exe --status` **同一处**），
     /// 界面只负责上色——不然两个入口会各判一套，修了一处另一处还错。
-    fn chain_card(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            let healthy = self.chain.healthy();
-            // 左：总判 + 总开关；右：一键修复（用 Sides 而不是 horizontal：
-            // 否则按钮会被长文案挤出窗口右边 —— 2026-10-09 截图实测到的布局 bug）
-            // 注意：两个闭包同时传进 Sides::show，不能各自借 &mut self（借用冲突），
-            // 所以先在闭包里只改局部变量，闭包结束后再回写。
-            let enabled = self.cfg.general.voice_enabled;
-            let mut on = enabled;
-            let mut want_repair = false;
-            egui::Sides::new().height(24.0).show(
-                ui,
-                |ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-                    let color = if healthy { OK_GREEN } else { BAD_RED };
-                    ui.painter().circle_filled(rect.center(), 6.0, color);
-                    ui.label(
-                        egui::RichText::new(if healthy {
-                            "链路状态：正常"
-                        } else {
-                            "链路状态：有异常"
-                        })
-                        .strong()
-                        .color(color),
-                    );
-                    ui.separator();
-                    ui.checkbox(&mut on, "启用语音输入")
-                        .on_hover_text("OFF = 停引擎（卸模型/摘热键），倾听输入法不再自动拉起");
-                },
-                |ui| {
-                    if ui
-                        .add_enabled(enabled, egui::Button::new("🔧 一键修复"))
-                        .on_hover_text(
-                            "重装钩子 + 重开麦克风 + 重新加载识别模型 + 拉起整理后端；\
-                             只修“不必重启进程就能修”的环，录音/识别中不可用",
-                        )
-                        .clicked()
-                    {
-                        want_repair = true;
-                    }
-                },
-            );
-            if on != enabled {
-                self.cfg.general.voice_enabled = on;
-                let ctx = ui.ctx().clone();
-                self.apply(&ctx);
-            }
-            if want_repair {
-                let _ = self.cmd_tx.send(crate::Cmd::Repair);
-                self.status = "已请求一键修复…".into();
-            }
+    fn page_diag(&mut self, ui: &mut egui::Ui) {
+        let healthy = self.chain.healthy();
+        group_frame(ui, "8 环链路", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let color = if healthy { OK_GREEN } else { BAD_RED };
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 6.0, color);
+                ui.label(
+                    egui::RichText::new(if healthy {
+                        "总判：正常"
+                    } else {
+                        "总判：有异常"
+                    })
+                    .strong()
+                    .color(color),
+                );
+            });
+            ui.add_space(GAP_ROW);
             // 列宽上限：长文案（麦克风静音提示 / 注入失败原因）必须**换行**而不是把整张卡撑宽
             // （2026-10-09 截图实测：不设限宽时右侧内容直接被窗口裁掉，一键修复按钮都看不见）
             let col_w = (ui.available_width() - 96.0).max(240.0);
@@ -3151,7 +3772,7 @@ let hint = if *minutes == 0 {
                 .show(ui, |ui| {
                     for (lvl, name, text) in self.chain.rows() {
                         let color = level_color(lvl);
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             let (rect, _) = ui.allocate_exact_size(
                                 egui::vec2(10.0, 10.0),
                                 egui::Sense::hover(),
@@ -3169,20 +3790,22 @@ let hint = if *minutes == 0 {
                     }
                 });
             if let Some(advice) = self.chain.advice() {
+                ui.add_space(GAP_ROW);
                 ui.colored_label(BAD_RED, advice);
             }
-            ui.weak("命令行查同一份：listen.exe --status（--json 给脚本）；日志：安装目录\\logs");
+        });
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "同源命令行", |ui| {
+            ui.weak("listen.exe --status          8 环文本（与这张卡同一份判级）");
+            ui.weak("listen.exe --status --json   给脚本用的机读状态（运行中/未运行两套 schema）");
+            ui.weak(format!("日志目录：{}", self.paths.logs_dir().display()));
         });
     }
 
-    fn section_floating(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("悬浮窗")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("g_floating")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
+    /// 悬浮窗
+    fn page_floating(&mut self, ui: &mut egui::Ui) {
+        group_frame(ui, "悬浮窗", |ui| {
+                form_grid("g_floating").show(ui, |ui| {
                         ui.label("显示悬浮窗");
                         if ui
                             .checkbox(&mut self.cfg.floating.enabled, "说话时显示状态与最近段落")
@@ -3211,7 +3834,7 @@ let hint = if *minutes == 0 {
                         ui.end_row();
 
                         ui.label("每行最大字数");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(egui::DragValue::new(&mut self.cfg.floating.max_chars).range(0..=200))
                                 .changed()
@@ -3223,7 +3846,7 @@ let hint = if *minutes == 0 {
                         ui.end_row();
 
                         ui.label("停留时间");
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             // 2026-10-20：用户报「太久不消失影响体验」（老配置 30 秒、而且只是个填数字的框）
                             let mut gear = self.cfg.floating.hide_gear();
                             let resp = egui::ComboBox::from_id_salt("float_hide_gear")
@@ -3270,15 +3893,19 @@ let hint = if *minutes == 0 {
                             touch!(self);
                         }
                         ui.end_row();
-                    });
+                });
+                ui.add_space(GAP_ROW);
                 ui.weak("拖动悬浮窗可移动，位置自动记忆；这里的改动即时生效并自动保存");
-            });
+        });
     }
 
-    fn section_model(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("本地模型")
-            .default_open(true)
-            .show(ui, |ui| {
+    /// 本地模型：状态 / 下载 / 目录
+    fn page_model(&mut self, ui: &mut egui::Ui) {
+        // 缺模型时才显示下载卡（与「识别」页同一份组件）
+        if self.install_panel(ui) {
+            ui.add_space(GAP_GROUP);
+        }
+        group_frame(ui, "识别模型", |ui| {
                 // 用 pump() 每 2s 刷新的缓存，避免每帧都去 stat 磁盘
                 let ready = self.last_model_ready;
                 // ⚠️ 目录要显示**当前后端实际用的那个**：以前固定显示 `asr.local_model`
@@ -3291,18 +3918,35 @@ let hint = if *minutes == 0 {
                 } else {
                     self.paths.resolve(&self.cfg.asr.local_model)
                 };
-                ui.label(format!(
-                    "状态：{} · 后端：{}",
-                    if ready { "已就绪" } else { "缺失" },
-                    if is_nano { "FunASR-Nano（支持热词偏置）" } else { "SenseVoice / Paraformer" }
-                ));
-                ui.weak(format!("目录：{}", dir.display()));
+                form_grid("g_model").show(ui, |ui| {
+                    ui.label("状态");
+                    ui.label(format!(
+                        "{} · 后端 {}",
+                        if ready { "已就绪" } else { "缺失" },
+                        if is_nano {
+                            "FunASR-Nano（支持热词偏置）"
+                        } else {
+                            "SenseVoice / Paraformer"
+                        }
+                    ));
+                    ui.end_row();
+
+                    ui.label("目录");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("打开").clicked() {
+                            crate::open_path(&dir);
+                        }
+                        ui.weak(dir.display().to_string());
+                    });
+                    ui.end_row();
+                });
 
                 let (running, msg, done) = {
                     let g = self.download.lock().unwrap();
                     (g.running, g.msg.clone(), g.done)
                 };
-                ui.horizontal(|ui| {
+                ui.add_space(GAP_ROW);
+                ui.horizontal_wrapped(|ui| {
                     if is_nano {
                         ui.weak("FunASR-Nano 的下载/配置用顶部「本地模型」那一条（约 4GB，含整理模型）");
                     } else if ui
@@ -3310,9 +3954,6 @@ let hint = if *minutes == 0 {
                         .clicked()
                     {
                         self.start_download();
-                    }
-                    if ui.button("打开模型目录").clicked() {
-                        crate::open_path(&dir);
                     }
                 });
                 if running {
@@ -3325,20 +3966,57 @@ let hint = if *minutes == 0 {
                     }
                 }
                 if !is_nano {
+                    ui.add_space(GAP_ROW);
                     ui.weak("也可以手动把 model.int8.onnx 与 tokens.txt 放进该目录（U 盘拷贝）");
                 }
-            });
+        });
     }
 
-    fn section_log(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("运行日志").show(ui, |ui| {
-            if ui.button("打开日志目录").clicked() {
-                crate::open_path(&self.paths.logs_dir());
+    /// 运行日志：目录 / 诊断包 / 本次运行提示
+    fn page_log(&mut self, ui: &mut egui::Ui) {
+        group_frame(ui, "日志与诊断包", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("打开日志目录").clicked() {
+                    crate::open_path(&self.paths.logs_dir());
+                }
+                if ui
+                    .button("导出诊断包")
+                    .on_hover_text("日志 + 启动阶段 + 卡死现场 + 脱敏配置，打包到数据目录；出问题时发这个")
+                    .clicked()
+                {
+                    match crate::diag::collect_support(
+                        &self.paths.root,
+                        &self.paths.config_file,
+                        &self.paths.data_root,
+                    ) {
+                        Ok(d) => {
+                            self.status = format!("诊断包已导出: {}", d.display());
+                            crate::open_path(&d);
+                        }
+                        Err(e) => self.status = format!("导出诊断包失败: {e}"),
+                    }
+                }
+            });
+            ui.add_space(GAP_ROW);
+            ui.weak(format!("数据目录：{}", self.paths.data_root.display()));
+            if !self.paths.writable {
+                ui.colored_label(
+                    egui::Color32::from_rgb(210, 60, 60),
+                    format!("安装目录只读，已改用数据目录（{}）", self.paths.data_root.display()),
+                );
             }
+        });
+
+        ui.add_space(GAP_GROUP);
+        group_frame(ui, "本次运行提示", |ui| {
             egui::ScrollArea::vertical()
-                .max_height(140.0)
+                .max_height(320.0)
                 .stick_to_bottom(true)
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    if self.notes.is_empty() {
+                        ui.weak("（还没有提示）");
+                    }
                     for n in &self.notes {
                         ui.small(n);
                     }
@@ -3647,10 +4325,13 @@ impl eframe::App for Gui {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        crate::diag::mark_first_frame();
         let ctx = ui.ctx().clone();
         self.pump(&ctx);
         // 自动保存（取消「保存并应用」后的唯一保存入口）：改动 600ms 后落盘 + 热生效
         self.autosave_tick(&ctx);
+        // 词表（快捷输入 / 热词）也是同一个规则：改完 700ms 写盘，没有保存按钮
+        self.hw_autosave_tick(&ctx);
 
         // GUI 帧间隔看门狗：>300ms 说明渲染被占住（wgpu 与 llama-server 抢 GPU 是已知嫌疑）。
         // 热键转发已挪到独立线程，所以这里只影响界面观感与诊断。
@@ -3672,14 +4353,21 @@ impl eframe::App for Gui {
         }
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit {
-            tracing::info!("窗口关闭请求 → 隐藏到托盘（程序继续运行）");
-            self.visible_wanted = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            // 关窗前把还没到点的自动保存**立刻做掉**（2026-10-21：不再有「未保存」概念）
-            if self.dirty {
-                self.autosave_at = None;
-                self.save_now();
+            // 首启向导 + 语音关闭：关掉向导就退出，不在任务栏留一个"没开语音的圆点"。
+            // （2026-10-26：新机装完的 `--first-run` 是完整实例，旧行为会隐藏到托盘常驻。）
+            if self.wizard && !self.cfg.general.voice_enabled && !self.managed {
+                tracing::info!("首启向导结束且语音未开启 → 退出（不常驻）");
+                self.flush_all();
+                self.quit = true;
+                let _ = self.cmd_tx.send(Cmd::Quit);
+            } else {
+                tracing::info!("窗口关闭请求 → 隐藏到托盘（程序继续运行）");
+                self.visible_wanted = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                // 关窗前把还没到点的自动保存**立刻做掉**（2026-10-21：不再有「未保存」概念）
+                // 2026-11-05：config + 词表统一走 flush_all（原来只存 config，词表靠另一行）
+                self.flush_all();
             }
         }
 
@@ -3700,6 +4388,8 @@ impl eframe::App for Gui {
         // GPU/CPU，而且隐藏窗口的 Present 是「整机 GPU 卡顿」最容易牵连到本进程的时刻。
         // 400ms 而不是完全停：托盘菜单/悬浮窗/事件通道还要靠这帧去轮询。
         let interval = if self.visible_wanted || self.float_visible { 50 } else { 400 };
+        // 给 ctl 线程一个"窗口是不是开着"的判据（OPEN_SETTINGS 用它决定唤起还是重启）
+        WINDOW_VISIBLE.store(self.visible_wanted, Ordering::SeqCst);
         ctx.request_repaint_after(Duration::from_millis(interval));
     }
 }
@@ -3768,33 +4458,124 @@ fn level_color(level: crate::chain::Level) -> egui::Color32 {
     }
 }
 
-/// egui 默认字体不含中文，从系统字体目录加载一个
+/// 把一份字体字节装成 egui 的中文字体（比例族放首位，等宽族垫底）
+///
+/// 单独抽出来是为了能被单测直接调用：egui 解析失败是 **panic**
+/// （`epaint`：`panic!("Error parsing {name:?} TTF/OTF font file")`），
+/// 所以字体必须先验证再交给 egui，否则用户一开设置页就崩。
+fn load_cjk_into(ctx: &egui::Context, bytes: Vec<u8>) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("cjk".to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
+    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        list.insert(0, "cjk".to_owned());
+    }
+    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        list.push("cjk".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// 粗筛：只接受真正的 sfnt 字体（防止把 0 字节/被截断/HTML 错误页塞给 egui → panic）
+fn looks_like_font(bytes: &[u8]) -> bool {
+    if bytes.len() < 1024 {
+        return false;
+    }
+    matches!(
+        &bytes[0..4],
+        b"\x00\x01\x00\x00" // TrueType
+            | b"OTTO"       // CFF/OTF
+            | b"true"       // 旧 TrueType
+            | b"ttcf" // 字体集合（ttc）
+    )
+}
+
+/// egui 默认字体不含中文，加载一个**开源**中文字体。
+///
+/// 2026-11-05：只允许开源字体入版。旧实现按 `Deng.ttf`（等线）/`msyh.ttc`（微软雅黑）/
+/// `simhei.ttf`（黑体）/`simsun.ttc`（宋体）的顺序加载 —— 这四个都是**微软/中易的商业字体**，
+/// 随程序分发属于侵权（`THIRD-PARTY-NOTICES.md` 只列开源件）。
+///
+/// 新的查找顺序：
+///   1. `<exe 同级>\resources\fonts\*.ttf|*.otf`：随包分发的开源字体（SIL OFL / Apache-2.0）；
+///   2. 系统里常见的开源中文字体（Noto Sans SC / 思源黑体 / HarmonyOS Sans / MiSans /
+///      霞鹜文楷 / 文泉驿 / Sarasa Gothic）；
+///   3. 都没有 → 保留 egui 自带字体（Ubuntu-Light / Hack，开源）并记 WARN，绝不回退商业字体。
 fn install_cjk_font(ctx: &egui::Context) {
-    const CANDIDATES: &[&str] = &[
-        "C:/Windows/Fonts/Deng.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc",
-    ];
-    for path in CANDIDATES {
-        let Ok(bytes) = std::fs::read(path) else {
+    /// 随包字体目录（相对 exe；绿色包/安装包都会带上 resources\fonts）
+    fn bundled_fonts() -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let Ok(exe) = std::env::current_exe() else {
+            return out;
+        };
+        let Some(dir) = exe.parent() else { return out };
+        let dir = dir.join("resources").join("fonts");
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return out;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let ok = p
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("ttf") || x.eq_ignore_ascii_case("otf"))
+                .unwrap_or(false);
+            if ok {
+                out.push(p);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    // 只列**开源**字体（SIL OFL 1.1 / Apache-2.0）；商业字体一律不进这个列表。
+    // 先静态字体（最稳），可变字体放后面（ttf-parser 取默认实例，个别老版本可能不认）。
+    let mut candidates: Vec<std::path::PathBuf> = bundled_fonts();
+    for p in [
+        // 思源黑体（SIL OFL 1.1）
+        "C:/Windows/Fonts/SourceHanSansCN-Regular.otf",
+        "C:/Windows/Fonts/SourceHanSansSC-Regular.otf",
+        // 常见开源字体（可能存在也可能不存在，逐个试）
+        "C:/Windows/Fonts/HarmonyOS_Sans_SC_Regular.ttf",
+        "C:/Windows/Fonts/MiSans-Regular.ttf",
+        "C:/Windows/Fonts/LXGWWenKai-Regular.ttf",
+        "C:/Windows/Fonts/wqy-microhei.ttc",
+        "C:/Windows/Fonts/sarasa-gothic-sc-regular.ttf",
+        // Noto Sans SC（Windows 11 自带的是可变字体，放最后）
+        "C:/Windows/Fonts/NotoSansSC-Regular.otf",
+        "C:/Windows/Fonts/NotoSansCJKsc-Regular.otf",
+        "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+    ] {
+        candidates.push(std::path::PathBuf::from(p));
+    }
+    // 用户级安装目录（%LOCALAPPDATA%\Microsoft\Windows\Fonts）里的思源黑体
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        candidates.push(
+            std::path::Path::new(&local)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+                .join("SourceHanSansCN-Regular.otf"),
+        );
+    }
+
+    for path in candidates {
+        let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let mut fonts = egui::FontDefinitions::default();
-        fonts
-            .font_data
-            .insert("cjk".to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
-        if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            list.insert(0, "cjk".to_owned());
+        if !looks_like_font(&bytes) {
+            tracing::warn!("跳过疑似损坏的字体文件（不是 sfnt）: {}", path.display());
+            continue;
         }
-        if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-            list.push("cjk".to_owned());
-        }
-        ctx.set_fonts(fonts);
-        tracing::info!("已加载中文字体: {path}");
+        load_cjk_into(ctx, bytes);
+        tracing::info!("已加载开源中文字体: {}", path.display());
         return;
     }
-    tracing::warn!("未找到可用的中文字体，界面中文可能显示为方块");
+    tracing::warn!(
+        "未找到开源中文字体（可放一份 SIL OFL 字体到 exe 同级 resources\\fonts\\）；\
+         界面中文可能显示为方块。已拒绝加载微软雅黑/等线/黑体/宋体等商业字体"
+    );
 }
 
 #[cfg(test)]
@@ -3852,5 +4633,39 @@ mod tests {
         assert_eq!(truncate_chars("hello", 4), "hel…");
         // 中文按字符数（不是字节数）
         assert_eq!(truncate_chars("语音输入测试", 4), "语音输…");
+    }
+
+    /// 字体坏了会让 egui **panic**（epaint 的 `panic!("Error parsing … font file")`），
+    /// 所以真实字体必须走一遍完整的「set_fonts + 排版」流程。本机没有开源字体时跳过。
+    #[test]
+    fn open_source_cjk_font_is_parseable() {
+        let mut tried = 0;
+        for p in [
+            "C:/Windows/Fonts/SourceHanSansCN-Regular.otf",
+            "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+            "C:/Windows/Fonts/NotoSansSC-Regular.otf",
+        ] {
+            let Ok(bytes) = std::fs::read(p) else { continue };
+            assert!(looks_like_font(&bytes), "{p} 不是 sfnt");
+            tried += 1;
+            let r = std::panic::catch_unwind(|| {
+                let ctx = egui::Context::default();
+                load_cjk_into(&ctx, bytes);
+                ctx.run_ui(Default::default(), |_ui| {
+                    ctx.fonts_mut(|f| {
+                        let _ = f.layout_no_wrap(
+                            "中文测试 ABC 123".to_owned(),
+                            egui::FontId::proportional(14.0),
+                            egui::Color32::WHITE,
+                        );
+                    });
+                });
+            });
+            assert!(r.is_ok(), "{p} 不能被 egui/ab_glyph 解析（真机上会崩在首帧）");
+            break;
+        }
+        if tried == 0 {
+            eprintln!("本机没有候选开源中文字体，跳过");
+        }
     }
 }

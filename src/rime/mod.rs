@@ -6,6 +6,7 @@
 //! 3. `*.custom.yaml` 只 patch 我们管理的键：标记块 + 合并写 + 写入前 .bak 备份
 //! 4. 用户自己的 `*.custom.yaml` / `*.userdb\` / `build\` 一律不动
 
+pub mod phrases_lua;
 pub mod schemes;
 
 use anyhow::{bail, Context, Result};
@@ -94,8 +95,51 @@ pub const GRAMMAR_FILE: &str = "wanxiang-lts-zh-hans.gram";
 /// 打字侧热词表（Rime custom_phrase 纯文本表）：由 `src/hotwords.rs` 从热词包生成
 pub const TERMS_FILE: &str = "listen_hotwords.txt";
 
+/// 热词表版本戳（`长度 毫秒时间戳`）：lua 翻译器靠它判断要不要重读词表
+///
+/// 为什么需要：custom_phrase 的 user_dict 被 librime 缓存在进程内（`db_pool_`），
+/// 光写 txt 不会重读（见 `phrases_lua` 模块注释）。lua 侧每次新输入只读这个几字节文件。
+pub const TERMS_VER_FILE: &str = "listen_hotwords.ver";
+
 /// 用户词学习钩子（lua 脚本）在用户目录里的相对路径
 pub const LEARN_LUA: &str = crate::learn::LUA_REL;
+
+/// 打字侧热词「即时生效」翻译器（lua 脚本）在用户目录里的相对路径
+pub const PHRASES_LUA: &str = "lua/listen_phrases.lua";
+
+/// 简繁防误触钩子（lua 脚本）在用户目录里的相对路径
+pub const GUARD_LUA: &str = "lua/listen_guard.lua";
+
+/// 内联而不是 `include_str!`：`resources/` 不在 git，新增第 4 个编译期必需文件会让
+/// 新克隆直接编译失败（`项目简介.md` §6.5）。脚本很短，内联更稳。
+const GUARD_LUA_BODY: &str = r#"-- 简繁防误触（倾听输入法，2026-10-26）
+--
+-- 背景：Ctrl+Shift+4 / Ctrl+Shift+$ 是 rime-ice 上游的"简繁切换"，位置贴近常用组合，
+-- 切换后没有任何提示 → 用户看到"输入简体拼音，几次操作后变繁体"（项目调试过程.md §56）。
+--
+-- 处理：在 processor 链**最前面**吞掉这一组（返回 0 = kRejected，后续 key_binder 收不到）。
+-- 简繁改为设置页的"部署期模式"（重新部署生效），运行期不再提供切换入口。
+--
+-- 注意：只吞带 Ctrl 的组合；Shift+4 = `$` 的正常输入不受影响；被吞的键仍会交给宿主应用
+-- （librime 返回 kRejected 后引擎返回未处理）。
+
+local M = {}
+
+function M.func(key, env)
+  if key:release() then
+    return 2 -- kNoop
+  end
+  if key:ctrl() and key:shift() then
+    local ch = key.keycode
+    if ch == 0x34 or ch == 0xFFB4 then -- '4' / 小键盘 4
+      return 0 -- kRejected
+    end
+  end
+  return 2 -- kNoop
+end
+
+return M
+"#;
 
 #[derive(Debug, Clone, Default)]
 pub struct WeaselInfo {
@@ -764,6 +808,7 @@ pub fn unpatch_managed(path: &Path) -> Result<bool> {
 ///
 /// `hotwords` = 是否已铺出打字热词表（决定要不要给 rime_ice patch `custom_phrase/user_dict`）
 /// `learn_path` = 用户词学习日志路径（Some = 挂 lua 钩子）
+/// `phrases_path` = 热词表绝对路径（Some = 挂 lua 翻译器，改完词表不用部署就生效）
 pub fn write_configs(
     user_dir: &Path,
     plan: &Plan,
@@ -772,6 +817,7 @@ pub fn write_configs(
     // 打字联想（`custom_phrase/enable_completion`）——只在 `hotwords=true` 时有意义
     prefix_completion: bool,
     learn_path: Option<&str>,
+    phrases_path: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut log = Vec::new();
     std::fs::create_dir_all(user_dir)
@@ -811,6 +857,8 @@ pub fn write_configs(
             use_terms,
             prefix_completion,
             learn,
+            // lua 翻译器只在「有热词表 + 有 custom_phrase 的方案」上挂
+            if use_terms { phrases_path } else { None },
         );
         if sb.trim().is_empty() {
             // 没内容可写：把旧的摘掉
@@ -821,7 +869,7 @@ pub fn write_configs(
         let f = user_dir.join(format!("{schema}.custom.yaml"));
         match patch_managed(&f, &sb) {
             Ok(()) => log.push(format!(
-                "  {} → {}{}{}{}",
+                "  {} → {}{}{}{}{}",
                 schema,
                 f.display(),
                 if use_grammar { "（含语法模型）" } else { "" },
@@ -834,7 +882,12 @@ pub fn write_configs(
                 } else {
                     ""
                 },
-                if learn.is_some() { "（含用户词学习钩子）" } else { "" }
+                if learn.is_some() { "（含用户词学习钩子）" } else { "" },
+                if use_terms && phrases_path.is_some() {
+                    "（含热词即时生效翻译器）"
+                } else {
+                    ""
+                }
             )),
             Err(e) => log.push(format!("  !! {e}")),
         }
@@ -1204,6 +1257,41 @@ pub fn write_learn_lua(user_dir: &Path) -> Result<String> {
         .with_context(|| format!("写学习钩子失败: {}", p.display()))?;
     register_file(user_dir, LEARN_LUA)?;
     Ok(format!("  用户词学习钩子 → {}", p.display()))
+}
+
+/// 铺「简繁防误触」钩子（lua processor）到用户目录，并登记进卸载清单
+///
+/// 必须在 `copy_schemes()` 之后（copy_schemes 会清理清单里"本轮源里没有"的文件）。
+pub fn write_guard_lua(user_dir: &Path) -> Result<String> {
+    let p = user_dir.join(GUARD_LUA);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)
+            .with_context(|| format!("创建目录失败: {}", d.display()))?;
+    }
+    std::fs::write(&p, GUARD_LUA_BODY)
+        .with_context(|| format!("写简繁防误触钩子失败: {}", p.display()))?;
+    register_file(user_dir, GUARD_LUA)?;
+    Ok(format!("  简繁防误触钩子 → {}", p.display()))
+}
+
+/// 铺「打字侧热词即时生效」翻译器（lua_translator）到用户目录，并登记进卸载清单
+///
+/// ⚠️ 必须在 `copy_schemes()` **之后**调用：copy_schemes 会把清单里「本轮源里没有」的条目当陈旧文件删掉。
+///
+/// 为什么需要（2026-11-05 根因）：`listen_hotwords.txt` 由 custom_phrase 翻译器读取，而 librime 把
+/// user_dict 缓存在进程内（`UserDictionaryComponent::db_pool_`），WeaselServer 起来后不再重读 txt。
+/// 结果：设置页加了快捷输入，打字就是出不来，必须重启输入法/重新部署。这个 lua 翻译器每次新输入
+/// 按 `.ver` 版本戳判断要不要重读词表 → 换输入框即生效。详见 `phrases_lua` 模块注释。
+pub fn write_phrases_lua(user_dir: &Path) -> Result<String> {
+    let p = user_dir.join(PHRASES_LUA);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)
+            .with_context(|| format!("创建目录失败: {}", d.display()))?;
+    }
+    std::fs::write(&p, phrases_lua::BODY)
+        .with_context(|| format!("写热词翻译器失败: {}", p.display()))?;
+    register_file(user_dir, PHRASES_LUA)?;
+    Ok(format!("  热词即时生效翻译器 → {}", p.display()))
 }
 
 /// 生成一份部署计划（供 GUI/CLI 共用）

@@ -270,7 +270,7 @@ pub fn build(cfg: &Config, paths: &Paths) -> Box<dyn SpeechJudge> {
         return Box::new(EnergyJudge::new(cfg));
     }
     let log = |m: String| tracing::info!("门控 VAD: {m}");
-    match VadJudge::new(cfg, &paths.root, &log) {
+    match VadJudge::new(cfg, &paths.data_root, &log) {
         Ok(j) => Box::new(j),
         Err(e) => {
             tracing::warn!(

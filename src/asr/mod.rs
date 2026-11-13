@@ -25,7 +25,7 @@ pub fn funasr_dir(cfg: &Config, paths: &Paths) -> std::path::PathBuf {
     let p = cfg.asr.funasr_nano_model.trim();
     if p.is_empty() {
         let base = if cfg.models.dir.trim().is_empty() {
-            paths.root.join("models")
+            paths.models_root().join("models")
         } else {
             std::path::PathBuf::from(cfg.models.dir.trim())
         };
@@ -124,13 +124,13 @@ fn write_hotwords(paths: &Paths, cfg: &Config, terms: &[String]) -> Option<PathB
     if terms.is_empty() || !cfg.asr.model_type.eq_ignore_ascii_case("paraformer") {
         return None;
     }
-    let p = paths.root.join("paraformer_hotwords.txt");
+    let p = paths.data_root.join("paraformer_hotwords.txt");
     if let Err(e) = std::fs::write(&p, terms.join("\n")) {
         tracing::warn!("写热词文件失败: {e}");
         return None;
     }
     // 旧名（改名前遗留）清掉，别留垃圾
-    let _ = std::fs::remove_file(paths.root.join("hotwords.txt"));
+    let _ = std::fs::remove_file(paths.data_root.join("hotwords.txt"));
     tracing::info!("热词文件已写入 {}（{} 个）", p.display(), terms.len());
     Some(p)
 }

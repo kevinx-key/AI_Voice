@@ -277,10 +277,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         (
-            Paths {
-                root: dir.clone(),
-                config_file: dir.join("config.toml"),
-            },
+            Paths::for_test(dir.clone()),
             dir,
         )
     }

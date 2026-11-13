@@ -1,4 +1,4 @@
-# 优雅重启装机版 listen（避免托盘"幽灵图标"）
+﻿# 优雅重启装机版 listen（避免托盘"幽灵图标"）
 #
 # 为什么需要它（2026-10-21 排查结论）：
 #   TrayIcon 只在**正常退出**（Drop）时才调用 Shell_NotifyIcon(NIM_DELETE)。
